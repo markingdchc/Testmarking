@@ -1361,11 +1361,25 @@ window.addEventListener('message', async (event) => {
         
         try {
             const result = await uploadBase64ToArchive(folderName, fileName, base64Data);
+            
+            // 🆕 جمع رسائل الأخطاء من كل من المحلي و GitHub
+            let errorMsg = null;
+            if (!result.success) {
+                let errors = [];
+                if (!result.local.success && result.local.error) {
+                    errors.push('المحلي: ' + result.local.error);
+                }
+                if (!result.github.success && result.github.error) {
+                    errors.push('GitHub: ' + result.github.error);
+                }
+                errorMsg = errors.join(' | ') || 'فشل الرفع';
+            }
+            
             event.source.postMessage({
                 type: 'uploadFileResult',
                 messageId: messageId,
                 success: result.success,
-                error: result.error || null
+                error: errorMsg
             }, '*');
         } catch (err) {
             event.source.postMessage({
