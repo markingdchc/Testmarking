@@ -426,6 +426,13 @@ async function openArchiveInternal(filterShip, filterDate) {
             <script>
                 window.archiveOpener = window.opener;
                 window.isAdminUser = ${isAdminUser};
+				// 🆕 دالة تنسيق حجم الملف (داخل نافذة الأرشيف)
+                window.formatFileSize = function(bytes) {
+                    if (!bytes || bytes < 0) return '0 B';
+                    if (bytes < 1024) return bytes + ' B';
+                    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+                };
                 window.currentFilterShip = "${filterShip || ''}";
                 window.currentFilterDate = "${filterDate || ''}";
                 window.currentPreviewUrl = null;
@@ -671,7 +678,6 @@ async function openArchiveInternal(filterShip, filterDate) {
                         let files = Array.from(e.target.files);
                         if (files.length === 0) return;
                         
-                        // فلترة الملفات
                         let invalidFiles = [];
                         let validFiles = [];
                         const MAX_SIZE = 25 * 1024 * 1024;
@@ -694,100 +700,96 @@ async function openArchiveInternal(filterShip, filterDate) {
                         
                         if (validFiles.length === 0) return;
                         
-                        // ============================================================
-                        // 🆕 إنشاء Modal احترافي للرفع
-                        // ============================================================
-                        let modal = document.getElementById('uploadModal');
+                        let totalSize = 0;
+                        for (let f of validFiles) totalSize += f.size;
+                        
+                        let modal = document.getElementById('uploadProgressModal');
                         if (modal) modal.remove();
                         
                         modal = document.createElement('div');
-                        modal.id = 'uploadModal';
-                        modal.style.cssText = `
-                            position: fixed;
-                            inset: 0;
-                            background: rgba(0,0,0,0.85);
-                            z-index: 99999;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            padding: 20px;
-                            direction: rtl;
-                        `;
+                        modal.id = 'uploadProgressModal';
+                        modal.style.cssText = 'position: fixed; inset: 0; background: linear-gradient(135deg, rgba(15,23,42,0.9), rgba(30,41,59,0.9)); z-index: 99999; display: flex; justify-content: center; align-items: center; padding: 20px; direction: rtl; backdrop-filter: blur(4px);';
                         
-                        let totalSize = validFiles.reduce((s, f) => s + f.size, 0);
+                        let h = '';
+                        // الحاوية الرئيسية - تدرج أبيض إلى رمادي فاتح
+                        h += '<div style="background: linear-gradient(180deg, #ffffff 0%, #f8fafc 50%, #e2e8f0 100%); border-radius: 18px; width: 95%; max-width: 850px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 70px rgba(15,23,42,0.6), 0 0 0 1px rgba(148,163,184,0.4);">';
                         
-                        modal.innerHTML = `
-                            <div style="background: white; border-radius: 16px; width: 95%; max-width: 850px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
-                                <div style="background: #8b5cf6; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;">
-                                    <h2 style="margin: 0; font-size: 18px;">📤 رفع المستندات</h2>
-                                    <button id="uploadCloseBtn" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 13px;">✖ إغلاق</button>
-                                </div>
-                                <div style="padding: 20px; overflow-y: auto; flex: 1;">
-                                    
-                                    <!-- الحالة -->
-                                    <div id="uploadStatus" style="padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px; background: #e7f3ff; color: #004085; font-weight: bold;">
-                                        ⏳ جاري التحضير...
-                                    </div>
-                                    
-                                    <!-- شريط التقدم الرئيسي -->
-                                    <div style="background: #e9ecef; border-radius: 10px; overflow: hidden; height: 30px; margin-bottom: 15px; position: relative;">
-                                        <div id="uploadProgressBar" style="height: 100%; background: linear-gradient(90deg, #8b5cf6, #a78bfa); transition: width 0.3s; width: 0%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;"></div>
-                                        <div id="uploadProgressText" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; color: #0a3d62;">0%</div>
-                                    </div>
-                                    
-                                    <!-- الإحصائيات الحية -->
-                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 15px;">
-                                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
-                                            <div style="font-size: 11px; color: #6c757d;">📊 الملفات</div>
-                                            <div id="uploadFileCounter" style="font-size: 16px; font-weight: bold; color: #0a3d62;">0 / ${validFiles.length}</div>
-                                        </div>
-                                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
-                                            <div style="font-size: 11px; color: #6c757d;">⏱️ الوقت المنقضي</div>
-                                            <div id="uploadElapsed" style="font-size: 16px; font-weight: bold; color: #0a3d62;">00:00</div>
-                                        </div>
-                                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
-                                            <div style="font-size: 11px; color: #6c757d;">⏳ الوقت المتبقي</div>
-                                            <div id="uploadRemaining" style="font-size: 16px; font-weight: bold; color: #e67e22;">--:--</div>
-                                        </div>
-                                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
-                                            <div style="font-size: 11px; color: #6c757d;">⚡ السرعة</div>
-                                            <div id="uploadSpeed" style="font-size: 16px; font-weight: bold; color: #28a745;">0 KB/s</div>
-                                        </div>
-                                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
-                                            <div style="font-size: 11px; color: #6c757d;">📊 متوسط السرعة</div>
-                                            <div id="uploadAvgSpeed" style="font-size: 16px; font-weight: bold; color: #17a2b8;">0 KB/s</div>
-                                        </div>
-                                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
-                                            <div style="font-size: 11px; color: #6c757d;">📦 الحجم الكلي</div>
-                                            <div id="uploadTotalSize" style="font-size: 16px; font-weight: bold; color: #0a3d62;">${formatFileSize(totalSize)}</div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- الملف الحالي -->
-                                    <div id="uploadCurrentFile" style="background: #f3e5ff; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-right: 4px solid #8b5cf6;">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                            <span style="font-weight: bold; color: #6b21a8;">📄 <span id="currentUploadFileName">—</span></span>
-                                            <span id="currentUploadFileSize" style="color: #6b21a8; font-size: 12px; font-weight: bold;">—</span>
-                                        </div>
-                                        <div style="background: #fff; border-radius: 5px; overflow: hidden; height: 12px;">
-                                            <div id="currentUploadFileProgress" style="height: 100%; background: linear-gradient(90deg, #8b5cf6, #a78bfa); transition: width 0.2s; width: 0%;"></div>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; color: #6b21a8;">
-                                            <span id="currentUploadFileStatus">—</span>
-                                            <span id="currentUploadFileStage">—</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- السجل -->
-                                    <div id="uploadLog" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 11px; direction: ltr; text-align: left;"></div>
-                                </div>
-                            </div>
-                        `;
+                        // الرأس - كحلي داكن
+                        h += '<div style="background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #1d4ed8 100%); color: white; padding: 16px 22px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(30,58,138,0.4);">';
+                        h += '<h2 style="margin: 0; font-size: 18px; letter-spacing: 0.5px; text-shadow: 0 2px 4px rgba(0,0,0,0.25);">📤 رفع المستندات</h2>';
+                        h += '<button id="uploadProgressCloseBtn" style="background: linear-gradient(135deg, rgba(255,255,255,0.25), rgba(255,255,255,0.1)); color: white; border: 1px solid rgba(255,255,255,0.4); padding: 8px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 13px; transition: 0.2s;">✖ إغلاق</button>';
+                        h += '</div>';
+                        
+                        h += '<div style="padding: 22px; overflow-y: auto; flex: 1;">';
+                        
+                        // الحالة - تدرج أبيض/رمادي
+                        h += '<div id="uStatus" style="padding: 13px 16px; border-radius: 12px; margin-bottom: 16px; font-size: 14px; background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); color: #1e293b; font-weight: bold; border-right: 4px solid #1e3a8a; box-shadow: 0 2px 8px rgba(148,163,184,0.2);">⏳ جاري التحضير...</div>';
+                        
+                        // شريط التقدم الرئيسي - كحلي
+                        h += '<div style="background: linear-gradient(135deg, #e2e8f0, #f1f5f9, #ffffff); border-radius: 12px; overflow: hidden; height: 34px; margin-bottom: 16px; position: relative; box-shadow: inset 0 2px 4px rgba(100,116,139,0.15), 0 1px 2px rgba(255,255,255,0.8);">';
+                        h += '<div id="uProgressBar" style="height: 100%; background: linear-gradient(90deg, #1e3a8a, #1e40af, #3b82f6); transition: width 0.3s; width: 0%; box-shadow: 0 0 15px rgba(30,64,175,0.6);"></div>';
+                        h += '<div id="uProgressText" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px; color: #1e293b; text-shadow: 0 1px 2px rgba(255,255,255,0.8);">0%</div>';
+                        h += '</div>';
+                        
+                        // البطاقات - تدرج أبيض/رمادي
+                        h += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px;">';
+                        
+                        h += '<div style="background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); padding: 12px 10px; border-radius: 10px; text-align: center; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(100,116,139,0.1);">';
+                        h += '<div style="font-size: 11px; color: #64748b; font-weight: bold;">📊 الملفات</div>';
+                        h += '<div id="uFileCounter" style="font-size: 17px; font-weight: bold; color: #1e3a8a; margin-top: 3px;">0 / ' + validFiles.length + '</div>';
+                        h += '</div>';
+                        
+                        h += '<div style="background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); padding: 12px 10px; border-radius: 10px; text-align: center; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(100,116,139,0.1);">';
+                        h += '<div style="font-size: 11px; color: #64748b; font-weight: bold;">⏱️ الوقت المنقضي</div>';
+                        h += '<div id="uElapsed" style="font-size: 17px; font-weight: bold; color: #334155; margin-top: 3px;">00:00</div>';
+                        h += '</div>';
+                        
+                        h += '<div style="background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); padding: 12px 10px; border-radius: 10px; text-align: center; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(100,116,139,0.1);">';
+                        h += '<div style="font-size: 11px; color: #64748b; font-weight: bold;">⏳ الوقت المتبقي</div>';
+                        h += '<div id="uRemaining" style="font-size: 17px; font-weight: bold; color: #1e40af; margin-top: 3px;">--:--</div>';
+                        h += '</div>';
+                        
+                        h += '<div style="background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); padding: 12px 10px; border-radius: 10px; text-align: center; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(100,116,139,0.1);">';
+                        h += '<div style="font-size: 11px; color: #64748b; font-weight: bold;">⚡ السرعة</div>';
+                        h += '<div id="uSpeed" style="font-size: 17px; font-weight: bold; color: #1e40af; margin-top: 3px;">0 KB/s</div>';
+                        h += '</div>';
+                        
+                        h += '<div style="background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); padding: 12px 10px; border-radius: 10px; text-align: center; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(100,116,139,0.1);">';
+                        h += '<div style="font-size: 11px; color: #64748b; font-weight: bold;">📊 متوسط السرعة</div>';
+                        h += '<div id="uAvgSpeed" style="font-size: 17px; font-weight: bold; color: #334155; margin-top: 3px;">0 KB/s</div>';
+                        h += '</div>';
+                        
+                        h += '<div style="background: linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); padding: 12px 10px; border-radius: 10px; text-align: center; border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(100,116,139,0.1);">';
+                        h += '<div style="font-size: 11px; color: #64748b; font-weight: bold;">📦 الحجم</div>';
+                        h += '<div id="uTotalSize" style="font-size: 17px; font-weight: bold; color: #1e3a8a; margin-top: 3px;">' + formatFileSize(totalSize) + '</div>';
+                        h += '</div>';
+                        
+                        h += '</div>';
+                        
+                        // الملف الحالي - تدرج كحلي فاتح
+                        h += '<div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 50%, #bfdbfe 100%); padding: 14px; border-radius: 12px; margin-bottom: 16px; border-right: 4px solid #1e3a8a; box-shadow: 0 3px 10px rgba(30,58,138,0.15);">';
+                        h += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">';
+                        h += '<span style="font-weight: bold; color: #1e3a8a;">📄 <span id="uCurrentName">—</span></span>';
+                        h += '<span id="uCurrentSize" style="color: #1e3a8a; font-size: 12px; font-weight: bold; background: rgba(255,255,255,0.8); padding: 3px 10px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">—</span>';
+                        h += '</div>';
+                        h += '<div style="background: rgba(255,255,255,0.9); border-radius: 6px; overflow: hidden; height: 14px; box-shadow: inset 0 2px 4px rgba(30,58,138,0.15);">';
+                        h += '<div id="uCurrentProgress" style="height: 100%; background: linear-gradient(90deg, #1e3a8a, #1e40af, #3b82f6); transition: width 0.2s; width: 0%; box-shadow: 0 0 10px rgba(30,64,175,0.5);"></div>';
+                        h += '</div>';
+                        h += '<div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: #1e3a8a; font-weight: bold;">';
+                        h += '<span id="uCurrentStatus">—</span>';
+                        h += '<span id="uCurrentStage">—</span>';
+                        h += '</div>';
+                        h += '</div>';
+                        
+                        // السجل - تدرج أبيض/رمادي
+                        h += '<div id="uLog" style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 50%, #f1f5f9 100%); border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; max-height: 180px; overflow-y: auto; font-family: monospace; font-size: 11px; direction: ltr; text-align: left; box-shadow: inset 0 2px 4px rgba(100,116,139,0.08);"></div>';
+                        
+                        h += '</div></div>';
+                        
+                        modal.innerHTML = h;
                         document.body.appendChild(modal);
                         
-                        // ============================================================
                         // دوال مساعدة
-                        // ============================================================
                         let startTime = Date.now();
                         let currentFileStartTime = 0;
                         let lastSpeedUpdate = Date.now();
@@ -796,89 +798,103 @@ async function openArchiveInternal(filterShip, filterDate) {
                         let transferredBytes = 0;
                         let currentFileIndex = 0;
                         
-                        function formatTime(seconds) {
+                        function fmtTime(seconds) {
                             if (!isFinite(seconds) || seconds < 0) return '--:--';
-                            let h = Math.floor(seconds / 3600);
-                            let m = Math.floor((seconds % 3600) / 60);
-                            let s = Math.floor(seconds % 60);
-                            if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-                            return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+                            let hh = Math.floor(seconds / 3600);
+                            let mm = Math.floor((seconds % 3600) / 60);
+                            let ss = Math.floor(seconds % 60);
+                            if (hh > 0) return hh + ':' + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+                            return String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
                         }
                         
-                        function formatSpeed(bytesPerSec) {
-                            if (!isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 KB/s';
-                            if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s';
-                            if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
-                            return (bytesPerSec / (1024 * 1024)).toFixed(2) + ' MB/s';
+                        function fmtSpeed(bps) {
+                            if (!isFinite(bps) || bps <= 0) return '0 KB/s';
+                            if (bps < 1024) return bps.toFixed(0) + ' B/s';
+                            if (bps < 1024 * 1024) return (bps / 1024).toFixed(1) + ' KB/s';
+                            return (bps / (1024 * 1024)).toFixed(2) + ' MB/s';
                         }
                         
-                        function uploadLog(msg, type = 'info') {
-                            let log = document.getElementById('uploadLog');
+                        function uLog(msg, type) {
+                            type = type || 'info';
+                            let log = document.getElementById('uLog');
                             if (!log) return;
                             let entry = document.createElement('div');
-                            entry.style.cssText = 'padding: 2px 0; ' + 
-                                (type === 'success' ? 'color: #28a745;' : 
-                                 type === 'error' ? 'color: #dc3545;' : 
-                                 type === 'warning' ? 'color: #e67e22;' : 
-                                 'color: #17a2b8;');
-                            let time = new Date().toLocaleTimeString('ar-EG');
-                            entry.textContent = '[' + time + '] ' + msg;
+                            let color = '#334155';
+                            let bg = 'linear-gradient(135deg, #f8fafc, #f1f5f9)';
+                            let border = '1px solid #e2e8f0';
+                            if (type === 'success') {
+                                color = '#166534';
+                                bg = 'linear-gradient(135deg, #f0fdf4, #dcfce7)';
+                                border = '1px solid #bbf7d0';
+                            } else if (type === 'error') {
+                                color = '#991b1b';
+                                bg = 'linear-gradient(135deg, #fef2f2, #fee2e2)';
+                                border = '1px solid #fecaca';
+                            } else if (type === 'warning') {
+                                color = '#854d0e';
+                                bg = 'linear-gradient(135deg, #fefce8, #fef9c3)';
+                                border = '1px solid #fde68a';
+                            } else if (type === 'info') {
+                                color = '#1e3a8a';
+                                bg = 'linear-gradient(135deg, #eff6ff, #dbeafe)';
+                                border = '1px solid #bfdbfe';
+                            }
+                            entry.style.cssText = 'padding: 4px 8px; color: ' + color + '; background: ' + bg + '; border-radius: 6px; margin: 3px 0; border: ' + border + ';';
+                            let t = new Date().toLocaleTimeString('ar-EG');
+                            entry.textContent = '[' + t + '] ' + msg;
                             log.appendChild(entry);
                             log.scrollTop = log.scrollHeight;
                         }
                         
-                        function uploadStatus(msg, type = 'info') {
-                            let st = document.getElementById('uploadStatus');
+                        function uStatus(msg, type) {
+                            type = type || 'info';
+                            let st = document.getElementById('uStatus');
                             if (!st) return;
-                            let colors = {
-                                info: 'background: #e7f3ff; color: #004085;',
-                                success: 'background: #d4edda; color: #155724;',
-                                warning: 'background: #fff3cd; color: #856404;',
-                                error: 'background: #f8d7da; color: #721c24;'
+                            let gradients = {
+                                info: 'linear-gradient(135deg, #ffffff, #f8fafc, #e2e8f0); color: #1e293b; border-right: 4px solid #1e3a8a;',
+                                success: 'linear-gradient(135deg, #ffffff, #dcfce7, #bbf7d0); color: #166534; border-right: 4px solid #22c55e;',
+                                warning: 'linear-gradient(135deg, #ffffff, #fef9c3, #fde68a); color: #854d0e; border-right: 4px solid #f59e0b;',
+                                error: 'linear-gradient(135deg, #ffffff, #fee2e2, #fecaca); color: #991b1b; border-right: 4px solid #ef4444;'
                             };
-                            st.style.cssText = 'padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px; font-weight: bold; ' + (colors[type] || colors.info);
+                            st.style.cssText = 'padding: 13px 16px; border-radius: 12px; margin-bottom: 16px; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(148,163,184,0.2); ' + (gradients[type] || gradients.info);
                             st.textContent = msg;
                         }
                         
-                        function uploadProgress(pct, text) {
-                            let bar = document.getElementById('uploadProgressBar');
-                            let txt = document.getElementById('uploadProgressText');
+                        function uProgress(pct) {
+                            let bar = document.getElementById('uProgressBar');
+                            let txt = document.getElementById('uProgressText');
                             if (bar) bar.style.width = pct + '%';
-                            if (txt) txt.textContent = text || (pct + '%');
+                            if (txt) txt.textContent = pct + '%';
                         }
                         
-                        function updateCurrentFile(fileName, fileSize, index, total) {
-                            document.getElementById('currentUploadFileName').textContent = fileName;
-                            document.getElementById('currentUploadFileSize').textContent = formatFileSize(fileSize);
-                            document.getElementById('currentUploadFileProgress').style.width = '0%';
-                            document.getElementById('currentUploadFileStatus').textContent = `📄 ${index} / ${total}`;
-                            document.getElementById('currentUploadFileStage').textContent = '⏳ جاري القراءة...';
-                            
+                        function uSetCurrentFile(name, size, idx, total) {
+                            document.getElementById('uCurrentName').textContent = name;
+                            document.getElementById('uCurrentSize').textContent = formatFileSize(size);
+                            document.getElementById('uCurrentProgress').style.width = '0%';
+                            document.getElementById('uCurrentStatus').textContent = '📄 ' + idx + ' / ' + total;
+                            document.getElementById('uCurrentStage').textContent = '⏳ جاري القراءة...';
                             currentFileStartTime = Date.now();
                         }
                         
-                        function updateCurrentFileStage(stage, pct = null) {
-                            document.getElementById('currentUploadFileStage').textContent = stage;
-                            if (pct !== null) {
-                                document.getElementById('currentUploadFileProgress').style.width = pct + '%';
+                        function uSetStage(stage, pct) {
+                            document.getElementById('uCurrentStage').textContent = stage;
+                            if (pct !== null && pct !== undefined) {
+                                document.getElementById('uCurrentProgress').style.width = pct + '%';
                             }
                         }
                         
-                        // مؤقت التحديث
-                        let timerInterval = setInterval(() => {
+                        let timerInterval = setInterval(function() {
                             let elapsed = (Date.now() - startTime) / 1000;
-                            let elapsedEl = document.getElementById('uploadElapsed');
-                            if (elapsedEl) elapsedEl.textContent = formatTime(elapsed);
+                            let el = document.getElementById('uElapsed');
+                            if (el) el.textContent = fmtTime(elapsed);
                             
-                            // الوقت المتبقي
                             if (transferredBytes > 0 && totalSize > 0) {
                                 let rate = transferredBytes / elapsed;
                                 let remaining = (totalSize - transferredBytes) / rate;
-                                let remainingEl = document.getElementById('uploadRemaining');
-                                if (remainingEl) remainingEl.textContent = formatTime(remaining);
+                                let rEl = document.getElementById('uRemaining');
+                                if (rEl) rEl.textContent = fmtTime(remaining);
                             }
                             
-                            // السرعة
                             let now = Date.now();
                             if (now - lastSpeedUpdate >= 1000) {
                                 let timeDiff = (now - lastSpeedUpdate) / 1000;
@@ -891,32 +907,29 @@ async function openArchiveInternal(filterShip, filterDate) {
                                 }
                                 
                                 let avgSpeed = speedHistory.length > 0 
-                                    ? speedHistory.reduce((a,b) => a+b, 0) / speedHistory.length 
+                                    ? speedHistory.reduce(function(a,b){return a+b;}, 0) / speedHistory.length 
                                     : 0;
                                 
-                                let speedEl = document.getElementById('uploadSpeed');
-                                let avgEl = document.getElementById('uploadAvgSpeed');
-                                if (speedEl) speedEl.textContent = formatSpeed(currentSpeed);
-                                if (avgEl) avgEl.textContent = formatSpeed(avgSpeed);
+                                let sEl = document.getElementById('uSpeed');
+                                let aEl = document.getElementById('uAvgSpeed');
+                                if (sEl) sEl.textContent = fmtSpeed(currentSpeed);
+                                if (aEl) aEl.textContent = fmtSpeed(avgSpeed);
                                 
                                 lastSpeedUpdate = now;
                                 lastBytesSnapshot = transferredBytes;
                             }
                         }, 500);
                         
-                        document.getElementById('uploadCloseBtn').onclick = () => {
-                            if (confirm('هل تريد إلغاء الرفع؟')) {
+                        document.getElementById('uploadProgressCloseBtn').onclick = function() {
+                            if (confirm('هل تريد إغلاق نافذة الرفع؟ (الرفع سيستمر)')) {
                                 clearInterval(timerInterval);
                                 modal.remove();
                             }
                         };
                         
-                        // ============================================================
-                        // 🚀 بدء الرفع
-                        // ============================================================
-                        uploadStatus(`📤 رفع ${validFiles.length} ملف (${formatFileSize(totalSize)})...`);
-                        uploadLog(`🚀 بدء رفع ${validFiles.length} ملف`, 'info');
-                        uploadLog(`📦 الحجم الكلي: ${formatFileSize(totalSize)}`, 'info');
+                        uStatus('📤 رفع ' + validFiles.length + ' ملف (' + formatFileSize(totalSize) + ')...');
+                        uLog('🚀 بدء رفع ' + validFiles.length + ' ملف', 'info');
+                        uLog('📦 الحجم الكلي: ' + formatFileSize(totalSize), 'info');
                         
                         let successCount = 0;
                         let failCount = 0;
@@ -926,20 +939,16 @@ async function openArchiveInternal(filterShip, filterDate) {
                             let file = validFiles[i];
                             currentFileIndex = i + 1;
                             
-                            // عرض معلومات الملف الحالي
-                            updateCurrentFile(file.name, file.size, i + 1, validFiles.length);
+                            uSetCurrentFile(file.name, file.size, i + 1, validFiles.length);
+                            document.getElementById('uFileCounter').textContent = i + ' / ' + validFiles.length;
                             
-                            // تحديث العداد
-                            document.getElementById('uploadFileCounter').textContent = `${i} / ${validFiles.length}`;
-                            
-                            uploadLog(`📄 [${i+1}/${validFiles.length}] ${file.name} (${formatFileSize(file.size)})`, 'warning');
-                            updateCurrentFileStage('📖 قراءة الملف...', 10);
+                            uLog('📄 [' + (i+1) + '/' + validFiles.length + '] ' + file.name + ' (' + formatFileSize(file.size) + ')', 'warning');
+                            uSetStage('📖 قراءة الملف...', 10);
                             
                             try {
-                                // 1️⃣ قراءة الملف كـ base64
-                                let base64 = await new Promise((resolve, reject) => {
+                                let base64 = await new Promise(function(resolve, reject) {
                                     let reader = new FileReader();
-                                    reader.onload = () => {
+                                    reader.onload = function() {
                                         let binary = '';
                                         let bytes = new Uint8Array(reader.result);
                                         let chunkSize = 8192;
@@ -952,19 +961,17 @@ async function openArchiveInternal(filterShip, filterDate) {
                                     reader.readAsArrayBuffer(file);
                                 });
                                 
-                                updateCurrentFileStage('📖 تم القراءة', 30);
-                                transferredBytes += file.size * 0.3;  // 30% للقراءة
+                                uSetStage('📖 تم القراءة', 30);
+                                transferredBytes = (currentFileIndex - 1) * (totalSize / validFiles.length) + (file.size * 0.3);
+                                uSetStage('🖥️ رفع إلى المحلي + GitHub...', 40);
                                 
-                                // 2️⃣ رفع إلى المحلي + GitHub عبر postMessage
-                                updateCurrentFileStage('🖥️ رفع إلى المحلي...', 40);
-                                
-                                let result = await new Promise((resolve, reject) => {
+                                let result = await new Promise(function(resolve, reject) {
                                     const messageId = 'upload_' + Date.now() + '_' + i;
+                                    let fakeInterval = null;
                                     
-                                    const handler = (event) => {
-                                        if (event.data && 
-                                            event.data.type === 'uploadFileResult' && 
-                                            event.data.messageId === messageId) {
+                                    const handler = function(event) {
+                                        if (event.data && event.data.type === 'uploadFileResult' && event.data.messageId === messageId) {
+                                            if (fakeInterval) clearInterval(fakeInterval);
                                             window.removeEventListener('message', handler);
                                             resolve(event.data);
                                         }
@@ -980,87 +987,78 @@ async function openArchiveInternal(filterShip, filterDate) {
                                         base64Data: base64
                                     }, '*');
                                     
-                                    // تحديث وهمي للتقدم (لأننا لا نعرف الحالة الحقيقية)
                                     let fakeProgress = 40;
-                                    let fakeInterval = setInterval(() => {
+                                    let fileBase = (currentFileIndex - 1) * (totalSize / validFiles.length);
+                                    fakeInterval = setInterval(function() {
                                         fakeProgress += 5;
                                         if (fakeProgress > 90) fakeProgress = 90;
-                                        updateCurrentFileStage('☁️ رفع إلى GitHub...', fakeProgress);
-                                        transferredBytes = (currentFileIndex - 1) * (totalSize / validFiles.length) + (file.size * fakeProgress / 100);
+                                        uSetStage('☁️ رفع إلى GitHub...', fakeProgress);
+                                        transferredBytes = fileBase + (file.size * fakeProgress / 100);
                                     }, 500);
                                     
-                                    setTimeout(() => {
-                                        clearInterval(fakeInterval);
+                                    setTimeout(function() {
+                                        if (fakeInterval) clearInterval(fakeInterval);
                                         window.removeEventListener('message', handler);
                                         reject(new Error('انتهت المهلة (60 ثانية)'));
                                     }, 60000);
-                                    
-                                    // حفظ الـ interval للإلغاء عند النجاح
-                                    handler.fakeInterval = fakeInterval;
                                 });
                                 
-                                updateCurrentFileStage('✅ تم الرفع', 100);
+                                uSetStage('✅ تم الرفع', 100);
                                 transferredBytes = currentFileIndex * (totalSize / validFiles.length);
                                 
                                 if (result.success) {
                                     successCount++;
-                                    uploadLog(`  ✅ تم بنجاح`, 'success');
+                                    uLog('  ✅ تم بنجاح', 'success');
                                 } else {
                                     failCount++;
-                                    errorMessages.push(file.name + ': ' + (result.error || 'فشل'));
-                                    uploadLog(`  ❌ فشل: ${result.error}`, 'error');
+                                    errorMessages.push(file.name + ': ' + result.error);
+                                    uLog('  ❌ فشل: ' + result.error, 'error');
                                 }
                                 
                             } catch (err) {
                                 failCount++;
                                 errorMessages.push(file.name + ': ' + err.message);
-                                uploadLog(`  ❌ خطأ: ${err.message}`, 'error');
-                                updateCurrentFileStage('❌ فشل', 100);
+                                uLog('  ❌ خطأ: ' + err.message, 'error');
+                                uSetStage('❌ فشل', 100);
                             }
                             
-                            // تحديث الشريط الرئيسي
                             let progress = Math.round(((i + 1) / validFiles.length) * 100);
-                            uploadProgress(progress);
-                            document.getElementById('uploadFileCounter').textContent = `${i + 1} / ${validFiles.length}`;
-                            
-                            // إيقاف مؤقت بسيط
-                            await new Promise(r => setTimeout(r, 200));
+                            uProgress(progress);
+                            document.getElementById('uFileCounter').textContent = (i + 1) + ' / ' + validFiles.length;
                         }
                         
-                        // ============================================================
-                        // النتيجة النهائية
-                        // ============================================================
                         clearInterval(timerInterval);
                         
                         let totalElapsed = (Date.now() - startTime) / 1000;
                         let avgSpeed = totalSize / totalElapsed;
                         
                         if (failCount === 0) {
-                            uploadStatus(`🎉 تم رفع ${successCount} ملف بنجاح في ${formatTime(totalElapsed)}`, 'success');
+                            uStatus('🎉 تم رفع ' + successCount + ' ملف بنجاح في ' + fmtTime(totalElapsed), 'success');
                         } else {
-                            uploadStatus(`⚠️ نجح: ${successCount}، فشل: ${failCount}`, 'warning');
+                            uStatus('⚠️ نجح: ' + successCount + '، فشل: ' + failCount, 'warning');
                         }
                         
-                        uploadLog("═══════════════════════════", 'info');
-                        uploadLog(`⏱️ الوقت: ${formatTime(totalElapsed)}`, 'info');
-                        uploadLog(`⚡ متوسط السرعة: ${formatSpeed(avgSpeed)}`, 'info');
-                        uploadLog(`✅ نجح: ${successCount}`, 'success');
-                        uploadLog(`❌ فشل: ${failCount}`, failCount > 0 ? 'error' : 'info');
+                        uLog('═══════════════════════════', 'info');
+                        uLog('⏱️ الوقت: ' + fmtTime(totalElapsed), 'info');
+                        uLog('⚡ متوسط السرعة: ' + fmtSpeed(avgSpeed), 'info');
+                        uLog('✅ نجح: ' + successCount, 'success');
+                        uLog('❌ فشل: ' + failCount, failCount > 0 ? 'error' : 'info');
                         
-                        document.getElementById('uploadFileCounter').textContent = `${validFiles.length} / ${validFiles.length}`;
+                        document.getElementById('uFileCounter').textContent = validFiles.length + ' / ' + validFiles.length;
                         
-                        // تحديث الأرشيف بعد 2 ثانية
-                        setTimeout(async () => {
+                        setTimeout(async function() {
                             if (modal.parentNode) modal.remove();
-                            alert(`✅ تم الرفع بنجاح: ${successCount} ملف${failCount > 0 ? '\\n❌ فشل: ' + failCount : ''}`);
+                            let msg = '✅ تم الرفع: ' + successCount + ' ملف';
+                            if (failCount > 0) msg += '\\n❌ فشل: ' + failCount;
+                            alert(msg);
                             await window.refreshArchiveContent();
-                        }, 2000);
+                        }, 2500);
                     };
                     
                     document.body.appendChild(input);
                     input.click();
                     
-                    setTimeout(() => {
+                    setTimeout(function() {
                         if (input.parentNode) input.parentNode.removeChild(input);
                     }, 1000);
                 };
