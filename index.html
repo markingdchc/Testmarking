@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تقرير الحاويات</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 1600px; margin: auto; background: white; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: #0a3d62; color: white; padding: 20px 25px; }
+        .header h1 { margin: 0; font-size: 1.8rem; }
+        .header p { margin: 5px 0 0; opacity: 0.9; }
+        .upload-area {
+            padding: 25px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            text-align: center;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            min-height: 90px;
+        }
+        .upload-area > * {
+            flex-shrink: 0;
+        }
+        .file-input { display: none; }
+        .file-label { background: #0a3d62; color: white; padding: 12px 28px; border-radius: 40px; cursor: pointer; display: inline-block; font-weight: bold; font-size: 16px; transition: 0.3s; margin: 5px; border: none; }
+        .file-label:hover { background: #1e6f5c; transform: translateY(-2px); }
+
+        .tabs { display: flex; border-bottom: 2px solid #dee2e6; background: white; padding: 0 25px; flex-wrap: wrap; }
+        .tab-btn { background: none; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; cursor: pointer; color: #6c757d; transition: 0.3s; }
+        .tab-btn:hover { color: #0a3d62; }
+        .tab-btn.active { color: #0a3d62; border-bottom: 3px solid #0a3d62; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .settings-btn { background: #28a745; color: white; padding: 12px 28px; border-radius: 40px; cursor: pointer; display: inline-block; font-weight: bold; font-size: 16px; transition: 0.3s; margin: 5px; border: none; }
+        .settings-btn:hover { background: #1e6f5c; transform: translateY(-2px); }
+        .settings-panel { background: #fff; border: 1px solid #dee2e6; border-radius: 12px; margin: 15px 25px; padding: 20px; display: none; max-height: 70vh; overflow-y: auto; }
+        .settings-panel h3 { margin-top: 0; color: #0a3d62; }
+        .periods-list { margin-bottom: 20px; }
+        .period-row { display: flex; gap: 15px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; background: #f8f9fa; padding: 10px; border-radius: 8px; border-right: 4px solid #0a3d62; }
+        .period-row input, .period-row select { padding: 6px 10px; border: 1px solid #ced4da; border-radius: 6px; }
+        .add-period { background: #0a3d62; color: white; border: none; padding: 8px 20px; border-radius: 30px; cursor: pointer; margin-top: 10px; }
+        .exclude-row { display: flex; gap: 15px; margin-bottom: 15px; align-items: center; flex-wrap: wrap; background: #fff3cd; padding: 10px; border-radius: 8px; }
+        .stats { display: flex; gap: 20px; padding: 20px 25px; background: #e9ecef; flex-wrap: wrap; }
+        .stat-card { background: white; border-radius: 12px; padding: 12px 20px; flex: 1; min-width: 120px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat-card h3 { margin: 0; font-size: 0.9rem; color: #6c757d; }
+        .stat-card .number { font-size: 1.8rem; font-weight: bold; color: #0a3d62; margin-top: 5px; }
+        .filters { padding: 15px 25px; background: white; display: flex; gap: 15px; flex-wrap: wrap; border-bottom: 1px solid #dee2e6; }
+        .filters input, .filters select { padding: 8px 12px; border: 1px solid #ced4da; border-radius: 8px; font-size: 14px; flex: 1; min-width: 150px; }
+        .table-wrapper { overflow-x: auto; padding: 0 0 20px 0; max-height: 550px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; direction: ltr; }
+        th { background: #0a3d62; color: white; padding: 8px 4px; position: sticky; top: 0; white-space: nowrap; text-align: center; }
+        td { padding: 6px 4px; border-bottom: 1px solid #e9ecef; text-align: center; }
+        tr:hover { background: #f1f3f5; }
+        .export-btn { background: #28a745; color: white; border: none; padding: 8px 18px; border-radius: 30px; cursor: pointer; font-weight: bold; margin: 15px 25px 10px auto; display: inline-block; }
+        .btn-container { text-align: left; padding: 0 25px; }
+        .footer { padding: 15px; text-align: center; color: #6c757d; font-size: 12px; border-top: 1px solid #dee2e6; }
+        .note { background: #e7f3ff; padding: 10px 20px; margin: 10px 25px; border-radius: 8px; font-size: 12px; color: #004085; }
+        .category-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; }
+        .trshp { background: #d4edda; color: #155724; }
+        .exprt { background: #fff3cd; color: #856404; }
+        .strge { background: #cce5ff; color: #004085; }
+        .exclude-badge { background: #f8d7da; color: #721c24; padding: 2px 6px; border-radius: 12px; font-size: 11px; }
+        .method-badge { background: #d1ecf1; color: #0c5460; padding: 2px 6px; border-radius: 12px; font-size: 11px; margin-left: 5px; }
+        .delete-btn { background: #dc3545; color: white; border: none; padding: 2px 8px; border-radius: 12px; cursor: pointer; font-size: 11px; }
+        .imprt-header { background: #e0f2fe; }
+        .imprt-cell { background: #e0f2fe; }
+
+        .print-btn {
+            background: #0a3d62;
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+        .print-btn:hover { background: #1e6f5c; transform: translateY(-2px); }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.active { display: flex; }
+        .modal-content { background: white; border-radius: 16px; width: 90%; max-width: 500px; max-height: 80vh; overflow: hidden; }
+        .modal-header { padding: 15px 20px; background: #0a3d62; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { padding: 20px; max-height: 60vh; overflow-y: auto; }
+        .modal-footer { padding: 15px 20px; background: #f8f9fa; display: flex; justify-content: flex-end; gap: 10px; }
+        .column-option { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e9ecef; }
+        .column-option input { width: 18px; height: 18px; cursor: pointer; }
+        .column-option label { cursor: pointer; flex: 1; }
+        .select-all { margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #0a3d62; }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 8px 20px; border-radius: 8px; cursor: pointer; }
+        .btn-secondary { background: #6c757d; color: white; border: none; padding: 8px 20px; border-radius: 8px; cursor: pointer; }
+
+        @media print {
+            body { background: white; padding: 0; margin: 0; }
+            .container { box-shadow: none; border-radius: 0; }
+            .upload-area, .tabs, .settings-btn, .filters, .btn-container, .export-btn, .print-btn, .footer, .note, .settings-panel, .modal, .file-label, .export-all-btn, #currentFileName, .no-print, #userBar, #githubFilesPanel {
+                display: none !important;
+            }
+            .signatures {
+                display: flex !important;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                background: white;
+                padding: 10px 20px;
+                border-top: 2px solid #0a3d62;
+                z-index: 100;
+            }
+            .table-wrapper { overflow: visible; max-height: none; }
+            th { background: #0a3d62; color: white; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            td { border: 1px solid #ddd; }
+        }
+
+        .signatures { display: none; }
+
+        .export-all-btn {
+            background: #17a2b8;
+            color: white;
+            padding: 12px 28px;
+            border-radius: 40px;
+            cursor: pointer;
+            display: inline-block;
+            font-weight: bold;
+            font-size: 16px;
+            transition: 0.3s;
+            margin: 5px;
+            border: none;
+        }
+        .export-all-btn:hover { background: #138496; transform: translateY(-2px); }
+
+        /* ========== شاشة تسجيل الدخول ========== */
+        #loginScreen {
+            position: fixed; inset: 0; background: linear-gradient(135deg, #0a3d62, #1e6f5c);
+            display: flex; align-items: center; justify-content: center; z-index: 99999;
+        }
+        .login-box {
+            background: white; border-radius: 16px; padding: 40px; width: 90%; max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .login-box h2 { text-align: center; color: #0a3d62; margin-bottom: 30px; }
+        .login-box input {
+            width: 100%; padding: 12px 16px; margin-bottom: 15px; font-size: 15px;
+            border: 2px solid #dee2e6; border-radius: 10px;
+        }
+        .login-box input:focus { border-color: #0a3d62; outline: none; }
+        .login-box button {
+            width: 100%; padding: 14px; background: #0a3d62; color: white; border: none;
+            border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer;
+            transition: 0.3s;
+        }
+        .login-box button:hover:not(:disabled) { background: #1e6f5c; }
+        .login-box button:disabled { opacity: 0.6; cursor: not-allowed; }
+        #loginError {
+            background: #f8d7da; color: #721c24; padding: 10px; border-radius: 8px;
+            margin-bottom: 15px; display: none; font-size: 13px;
+        }
+        .login-hint { text-align: center; color: #6c757d; font-size: 12px; margin-top: 15px; }
+
+        /* ========== شريط المستخدم ========== */
+        #userBar {
+            background: rgba(0,0,0,0.2); padding: 10px 15px; border-radius: 10px;
+            margin-top: 12px; font-size: 13px; color: white;
+        }
+    </style>
+</head>
+<body>
+
+<!-- شاشة تسجيل الدخول -->
+<div id="loginScreen" style="display:none;">
+    <div class="login-box">
+        <h2>📦 نظام تقرير الحاويات</h2>
+        <form id="loginForm">
+            <div id="loginError"></div>
+            <input type="text" id="loginUsername" placeholder="👤 اسم المستخدم" required autocomplete="username" />
+            <input type="password" id="loginPassword" placeholder="🔒 كلمة المرور" required autocomplete="current-password" />
+            <label style="display:flex; align-items:center; gap:8px; margin-bottom:15px; font-size:13px; color:#6c757d;">
+                <input type="checkbox" id="rememberMe" style="width:auto; margin:0;" /> تذكرني
+            </label>
+            <button type="submit" id="loginBtn">🔓 تسجيل الدخول</button>
+        </form>
+        <div class="login-hint">⚠️ لا تملك حساباً؟ تواصل مع المدير</div>
+    </div>
+</div>
+
+<div class="container" id="appContainer" style="display:none;">
+    <div class="header">
+	    <div id="userBar"></div>
+        <h1>📦 تقرير أيام التخزين</h1>
+        <div id="headerInfo" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 13px; display: flex; justify-content: space-between; flex-wrap: wrap;">
+            <div>🚢 <strong>سفينه الشحن (O/B Carrier Name):</strong> <span id="headerCarrierName">—</span></div>
+            <div>📅 <strong>تاريخ الشحن (O/B Carrier ATD):</strong> <span id="headerShippingDate">—</span></div>
+            <div>🏷️ <strong>الخط (Line ID):</strong> <span id="headerLineId">—</span></div>
+        </div>
+
+    </div>
+
+<!-- 🆕 صف اسم الملف المحمل (منفصل في الأعلى) -->
+<div id="currentFileBar" style="background: #e8f4f8; margin: 0 25px 15px 25px; padding: 10px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid #b8daff;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-weight: bold; color: #0a3d62;">📄 الملف الحالي:</span>
+        <span id="currentFileName" style="background: #fff; padding: 6px 14px; border-radius: 20px; font-size: 13px; color: #0a3d62; border: 1px solid #dee2e6;">
+            لا يوجد ملف محمل
+        </span>
+    </div>
+</div>
+
+<!-- 🆕 لوحة تحميل من GitHub -->
+<div id="githubFilesPanel" style="background:#e8f4f8;margin:0 25px 15px 25px;padding:12px 18px;border-radius:12px;display:flex;gap:10px;align-items:center;flex-wrap:nowrap;overflow-x:auto;border:1px solid #b8daff;">
+    <select id="ghShipSelect" style="padding:8px 12px;border-radius:8px;border:1px solid #ced4da;min-width:180px;font-size:14px;">
+        <option value="">-- اختر السفينة --</option>
+    </select>
+    
+    <select id="ghLineSelect" style="padding:8px 12px;border-radius:8px;border:1px solid #ced4da;min-width:140px;font-size:14px;">
+        <option value="">-- اختر الخط --</option>
+    </select>
+    
+    <select id="ghDateSelect" style="padding:8px 12px;border-radius:8px;border:1px solid #ced4da;min-width:140px;font-size:14px;">
+        <option value="">-- اختر التاريخ --</option>
+    </select>
+    
+    <button id="ghDownloadBtn" style="background:#17a2b8;color:white;border:none;padding:10px 24px;border-radius:30px;cursor:pointer;font-weight:bold;font-size:14px;">📥 تحميل الملف</button>
+    
+    <button id="ghRefreshBtn" style="background:#6c757d;color:white;border:none;padding:10px 20px;border-radius:30px;cursor:pointer;font-weight:bold;font-size:14px;">🔄 تحديث القائمة</button>
+    
+    <span id="ghStatus" style="font-size:13px;color:#6c757d;"></span>
+</div>
+
+<!-- 🆕 شريط الأزرار الرئيسية (صف واحد) -->
+<div class="upload-area" style="display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap;">
+    <input type="file" id="fileInput" class="file-input" accept=".xls, .xlsx" />
+    <label for="fileInput" class="file-label" style="margin: 0;">📂 تحميل ملف</label>
+    <button id="exportAllBtn" class="export-all-btn" style="margin: 0;">📥 تصدير جميع التبويبات</button>
+    <button id="setTokenBtn" style="background:#6c757d;color:white;padding:12px 28px;border-radius:40px;cursor:pointer;font-weight:bold;font-size:16px;border:none;display:none;">🔑 إعداد GitHub Token</button>
+     <!--<button id="manageUsersBtn" style="background:#8b5cf6;color:white;padding:12px 28px;border-radius:40px;cursor:pointer;font-weight:bold;font-size:16px;border:none;">👥 إدارة المستخدمين</button>-->
+    <button id="interactiveReportBtn" style="background: #e67e22; color: white; padding: 12px 28px; border-radius: 40px; cursor: pointer; font-weight: bold; font-size: 16px; border: none;">📊 تقرير مجمع تفاعلي</button>
+</div>
+
+<!-- قسم إدارة الخطوط العامة (مخفي - غير مفعّل) -->
+<div id="generalLinesManager" style="background: #e8f4f8; margin: 0 25px 15px 25px; padding: 12px 20px; border-radius: 12px; display: none; gap: 15px; align-items: center; flex-wrap: wrap;">
+    <div style="font-weight: bold; color: #0a3d62;">🏷️ إدارة الخطوط العامة:</div>
+    <input type="text" id="newGlobalLineName" placeholder="📝 اكتب اسم خط جديد (مثال: MAERSK, CMA-CGM, ...)" style="flex:2; padding: 8px 12px; border-radius: 8px; border: 1px solid #ced4da;">
+    <button id="addGlobalLineBtn" style="background: #28a745; color: white; border: none; padding: 8px 20px; border-radius: 30px; cursor: pointer; font-weight: bold;">➕ إضافة خط للجميع</button>
+</div>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="tab1">📋 TRSHP + EXPRT</button>
+        <button class="tab-btn" data-tab="tab2">📦 STRGE + EXPRT + IMPRT</button>
+        <button class="tab-btn" data-tab="tab3">📤 EXPRT فقط</button>
+        <button class="tab-btn" data-tab="tab4">📦 STRGE فارغ (MTY) + IMPRT</button>
+        <button class="tab-btn" data-tab="tab5">🚛 TRSHP فقط</button>
+        <button class="tab-btn" data-tab="tab6">📦 STRGE + EXPRT فقط</button>
+        <button class="tab-btn" data-tab="tab7">📥 IMPRT + FORWARD</button>
+        <button class="tab-btn" data-tab="tab8">📋 Storage Finalout</button>
+    </div>
+
+    <!-- تبويب 1 -->
+    <div id="tab1" class="tab-content active">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn1">⚙️ إعدادات فترات السماح (TRSHP/EXPRT)</button>
+        </div>
+        <div id="settingsPanel1" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - TRSHP + EXPRT</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine1">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn1" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList1" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح لـ TRSHP</h4>
+            <div id="trshpPeriodsList1" class="periods-list"></div>
+            <button id="addTrshpPeriodBtn1" class="add-period">➕ إضافة فترة جديدة لـ TRSHP</button>
+            <h4>📋 فترات السماح لـ EXPRT</h4>
+            <div id="exprtPeriodsList1" class="periods-list"></div>
+            <button id="addExprtPeriodBtn1" class="add-period">➕ إضافة فترة جديدة لـ EXPRT</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn1" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings1" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab1" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab1" style="display: none;">
+            <input type="text" id="searchTab1" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab1">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab1" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn1">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn1" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn1">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 فترات السماح المتسلسلة</div>
+            <table id="tableTab1">
+                <thead>
+                    <tr>
+                        <th>Container No.</th>
+                        <th>Size</th>
+                        <th>Is OOG</th>
+                        <th>Is Refrigerated</th>
+                        <th>flex_04</th>
+                        <th>Is Bundled</th>
+                        <th>Is Hazardous</th>
+                        <th>IMDG Class</th>
+                        <th>Type</th>
+                        <th>Line ID</th>
+                        <th>طريقة الحساب</th>
+                        <th>Flex String 01</th>
+                        <th>TRSHP Start</th>
+                        <th>TRSHP End</th>
+                        <th>TRSHP Days</th>
+                        <th>أيام مشتركة</th>
+                        <th>TRSHP بعد الخصم</th>
+                        <th>TRSHP Free</th>
+                        <th>TRSHP Net</th>
+                        <th>EXPRT Start</th>
+                        <th>EXPRT End</th>
+                        <th>EXPRT Days</th>
+                        <th>EXPRT Free</th>
+                        <th>EXPRT Net</th>
+                        <th>Total Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab1">
+                    <tr><td colspan="26" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 2 -->
+    <div id="tab2" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn2">⚙️ إعدادات فترات السماح (STRGE/EXPRT)</button>
+        </div>
+        <div id="settingsPanel2" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - STRGE + EXPRT</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine2">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn2" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList2" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح لـ STRGE</h4>
+            <div id="strgePeriodsList2" class="periods-list"></div>
+            <button id="addStrgePeriodBtn2" class="add-period">➕ إضافة فترة جديدة لـ STRGE</button>
+            <h4>📋 فترات السماح لـ EXPRT</h4>
+            <div id="exprtPeriodsList2" class="periods-list"></div>
+            <button id="addExprtPeriodBtn2" class="add-period">➕ إضافة فترة جديدة لـ EXPRT</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn2" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings2" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab2" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab2" style="display: none;">
+            <input type="text" id="searchTab2" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab2">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab2" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn2">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn2" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn2">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 فترات السماح المتسلسلة | 📥 IMPRT (دخول) يظهر قبل STRGE</div>
+            <table id="tableTab2">
+                <thead>
+                    <tr>
+                        <th>Container No.</th>
+                        <th>Size</th>
+                        <th>Is OOG</th>
+                        <th>Is Refrigerated</th>
+                        <th>Is Bundled</th>
+                        <th>Is Hazardous</th>
+                        <th>IMDG Class</th>
+                        <th>Type</th>
+                        <th>Line ID</th>
+                        <th>طريقة الحساب</th>
+                        <th>Flex String 01</th>
+                        <th>نوع IMPRT</th>
+                        <th>📥 IMPRT Start</th>
+                        <th>📥 IMPRT End</th>
+                        <th>📥 IMPRT Days</th>
+                        <th>📦 STRGE Start</th>
+                        <th>📦 STRGE End</th>
+                        <th>📦 STRGE Days</th>
+                        <th>أيام مشتركة</th>
+                        <th>STRGE بعد الخصم</th>
+                        <th>STRGE Free</th>
+                        <th>STRGE Net</th>
+                        <th>📤 EXPRT Start</th>
+                        <th>📤 EXPRT End</th>
+                        <th>EXPRT Days</th>
+                        <th>EXPRT Free</th>
+                        <th>EXPRT Net</th>
+                        <th>Total Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab2">
+                    <tr><td colspan="29" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 3: EXPRT فقط -->
+    <div id="tab3" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn3">⚙️ إعدادات فترات السماح (EXPRT فقط)</button>
+        </div>
+        <div id="settingsPanel3" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - EXPRT فقط</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine3">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn3" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList3" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح لـ EXPRT فقط</h4>
+            <div id="exprtOnlyPeriodsList3" class="periods-list"></div>
+            <button id="addExprtOnlyPeriodBtn3" class="add-period">➕ إضافة فترة جديدة</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn3" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings3" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab3" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab3" style="display: none;">
+            <input type="text" id="searchTab3" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab3">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab3" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn3">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn3" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn3">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 فترات السماح المتسلسلة | 📤 حاويات لها EXPRT فقط</div>
+            <table id="tableTab3">
+                <thead>
+                    <tr>
+                        <th>Container No.</th>
+                        <th>Size</th>
+                        <th>Is OOG</th>
+                        <th>Is Refrigerated</th>
+                        <th>Is Bundled</th>
+                        <th>Is Hazardous</th>
+                        <th>IMDG Class</th>
+                        <th>Type</th>
+                        <th>Line ID</th>
+                        <th>طريقة الحساب</th>
+                        <th>Flex String 01</th>
+                        <th>EXPRT Start</th>
+                        <th>EXPRT End</th>
+                        <th>EXPRT Days</th>
+                        <th>EXPRT Free</th>
+                        <th>EXPRT Net</th>
+                        <th>Total Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab3">
+                    <tr><td colspan="18" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 4: STRGE فارغ -->
+    <div id="tab4" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn4">⚙️ إعدادات فترات السماح (STRGE فارغ)</button>
+        </div>
+        <div id="settingsPanel4" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - STRGE فارغ (MTY)</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine4">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn4" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList4" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح لـ STRGE فارغ</h4>
+            <div id="emptyStrgePeriodsList4" class="periods-list"></div>
+            <button id="addEmptyStrgePeriodBtn4" class="add-period">➕ إضافة فترة جديدة</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn4" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings4" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab4" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab4" style="display: none;">
+            <input type="text" id="searchTab4" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab4">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab4" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn4">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn4" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn4">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📦 STRGE فارغ (MTY) + IMPRT | يتم جمع فترات STRGE المتعددة</div>
+            <table id="tableTab4">
+                <thead>
+                    <tr>
+                        <th>Container No.</th>
+                        <th>Size</th>
+                        <th>Is OOG</th>
+                        <th>Is Refrigerated</th>
+                        <th>Is Bundled</th>
+                        <th>Is Hazardous</th>
+                        <th>IMDG Class</th>
+                        <th>Type</th>
+                        <th>Line ID</th>
+                        <th>طريقة الحساب</th>
+                        <th>Flex String 01</th>
+                        <th>📥 IMPRT Start</th>
+                        <th>📥 IMPRT End</th>
+                        <th>📥 IMPRT Days</th>
+                        <th>📦 STRGE فارغ Start</th>
+                        <th>📦 STRGE فارغ End</th>
+                        <th>📦 STRGE فارغ Days</th>
+                        <th>STRGE Free</th>
+                        <th>STRGE Net</th>
+                        <th>Total Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab4">
+                    <tr><td colspan="21" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 5: TRSHP فقط -->
+    <div id="tab5" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn5">⚙️ إعدادات فترات السماح (TRSHP فقط)</button>
+        </div>
+        <div id="settingsPanel5" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - TRSHP فقط</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine5">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn5" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList5" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح لـ TRSHP</h4>
+            <div id="trshpOnlyPeriodsList5" class="periods-list"></div>
+            <button id="addTrshpOnlyPeriodBtn5" class="add-period">➕ إضافة فترة جديدة</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn5" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings5" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab5" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab5" style="display: none;">
+            <input type="text" id="searchTab5" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab5">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab5" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn5">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn5" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn5">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 فترات السماح المتسلسلة | 🚛 حاويات لها TRSHP فقط</div>
+            <table id="tableTab5">
+                <thead>
+                    <tr>
+                        <th>Container No.</th>
+                        <th>Size</th>
+                        <th>Freight Kind</th>
+                        <th>Is OOG</th>
+                        <th>Is Refrigerated</th>
+                        <th>Is Bundled</th>
+                        <th>Is Hazardous</th>
+                        <th>IMDG Class</th>
+                        <th>Type</th>
+                        <th>Line ID</th>
+                        <th>طريقة الحساب</th>
+                        <th>Flex String 01</th>
+                        <th>flex_04</th>
+                        <th>TRSHP Start</th>
+                        <th>TRSHP End</th>
+                        <th>TRSHP Days</th>
+                        <th>TRSHP Free</th>
+                        <th>TRSHP Net</th>
+                        <th>Total Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab5">
+                    <tr><td colspan="20" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 6: STRGE + EXPRT فقط -->
+    <div id="tab6" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn6">⚙️ إعدادات فترات السماح (STRGE/EXPRT)</button>
+        </div>
+        <div id="settingsPanel6" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - STRGE + EXPRT فقط</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine6">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn6" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList6" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح لـ STRGE</h4>
+            <div id="strgePeriodsList6" class="periods-list"></div>
+            <button id="addStrgePeriodBtn6" class="add-period">➕ إضافة فترة جديدة لـ STRGE</button>
+            <h4>📋 فترات السماح لـ EXPRT</h4>
+            <div id="exprtPeriodsList6" class="periods-list"></div>
+            <button id="addExprtPeriodBtn6" class="add-period">➕ إضافة فترة جديدة لـ EXPRT</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn6" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings6" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab6" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab6" style="display: none;">
+            <input type="text" id="searchTab6" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab6">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab6" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn6">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn6" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn6">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 فترات السماح المتسلسلة | 📦 STRGE + 📤 EXPRT فقط (بدون TRSHP/IMPRT)</div>
+            <table id="tableTab6">
+                <thead>
+                    <tr>
+                        <th>Container No.</th>
+                        <th>Size</th>
+                        <th>Is OOG</th>
+                        <th>Is Refrigerated</th>
+                        <th>Is Bundled</th>
+                        <th>Is Hazardous</th>
+                        <th>IMDG Class</th>
+                        <th>Type</th>
+                        <th>Line ID</th>
+                        <th>طريقة الحساب</th>
+                        <th>Flex String 01</th>
+                        <th>STRGE Start</th>
+                        <th>STRGE End</th>
+                        <th>STRGE Days</th>
+                        <th>أيام مشتركة</th>
+                        <th>STRGE بعد الخصم</th>
+                        <th>STRGE Free</th>
+                        <th>STRGE Net</th>
+                        <th>EXPRT Start</th>
+                        <th>EXPRT End</th>
+                        <th>EXPRT Days</th>
+                        <th>EXPRT Free</th>
+                        <th>EXPRT Net</th>
+                        <th>Total Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab6">
+                    <tr><td colspan="25" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 7: IMPRT + FORWARD -->
+    <div id="tab7" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn7">⚙️ إعدادات فترات السماح (IMPRT + FORWARD)</button>
+        </div>
+        <div id="settingsPanel7" class="settings-panel">
+            <h3>⚙️ إعدادات فترات السماح - IMPRT + FORWARD</h3>
+            <h4>🚫 استثناء خطوط</h4>
+            <div class="exclude-row">
+                <select id="excludeLine7">
+                    <option value="">اختر خطاً للاستثناء</option>
+                    <option value="MSC">MSC</option>
+                    <option value="ZIM">ZIM</option>
+                    <option value="VALOR">VALOR</option>
+                    <option value="YM">YM</option>
+                </select>
+                <button id="addExcludeBtn7" style="background:#dc3545;">➕ إضافة خط للاستثناء</button>
+            </div>
+            <div id="excludeList7" style="margin-bottom: 15px;"></div>
+            <h4>📋 فترات السماح</h4>
+            <div id="imprtForwardPeriodsList7" class="periods-list"></div>
+            <button id="addImprtForwardPeriodBtn7" class="add-period">➕ إضافة فترة جديدة</button>
+            <div style="margin-top: 20px;">
+                <button id="savePeriodsBtn7" class="add-period" style="background:#28a745;">💾 حفظ جميع الفترات</button>
+                <button id="closeSettings7" class="add-period" style="background:#6c757d;">إغلاق</button>
+            </div>
+        </div>
+        <div id="statsTab7" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab7" style="display: none;">
+            <input type="text" id="searchTab7" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab7">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab7" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn7">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn7" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn7">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 فترات السماح | 📥 IMPRT + FORWARD (تبدأ من PaidThruDate + 1)</div>
+            <table id="tableTab7">
+                <thead>
+                    <tr>
+                        <th>رقم الحاوية</th>
+                        <th>الحجم</th>
+                        <th>OOG</th>
+                        <th>ثلاجه</th>
+                        <th>خطر</th>
+                        <th>IMDG</th>
+                        <th>النوع</th>
+                        <th>الخط</th>
+                        <th>نوع</th>
+                        <th>Start Time</th>
+                        <th>PaidThruDate</th>
+                        <th>Start (Paid+1)</th>
+                        <th>End</th>
+                        <th>Days</th>
+                        <th>Free</th>
+                        <th>Net</th>
+                        <th>Vessel Name</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab7">
+                    <tr><td colspan="17" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- تبويب 8: Storage Finalout -->
+    <div id="tab8" class="tab-content">
+        <div style="text-align: left; padding: 15px 25px 0 25px;">
+            <button class="settings-btn" id="settingsBtn8">⚙️ إعدادات Storage Finalout</button>
+        </div>
+        <div id="settingsPanel8" class="settings-panel">
+            <h3>⚙️ إعدادات Storage Finalout</h3>
+            <p style="color: #6c757d;">لا توجد إعدادات مخصصة لهذا التبويب حالياً</p>
+            <button id="closeSettings8" class="add-period" style="background:#6c757d;">إغلاق</button>
+        </div>
+        <div id="statsTab8" class="stats" style="display: none;"></div>
+        <div class="filters" id="filtersTab8" style="display: none;">
+            <input type="text" id="searchTab8" placeholder="🔍 بحث برقم الحاوية..." />
+            <select id="typeTab8">
+                <option value="">كل الأنواع</option>
+                <option value="RF">RF (ثلاجه)</option>
+                <option value="GP">GP (عام)</option>
+            </select>
+        </div>
+        <div class="table-wrapper" id="wrapperTab8" style="display: none;">
+            <div class="btn-container" style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="print-btn" id="printBtn8">🖨️ طباعة التقرير</button>
+                    <button class="settings-btn" id="selectColumnsBtn8" style="background:#6c757d;">📊 اختيار الأعمدة</button>
+                </div>
+                <button class="export-btn" id="exportBtn8">📎 تصدير إلى Excel</button>
+            </div>
+            <div class="note">📅 تقرير الحاويات الصادرة - FINALOUT</div>
+            <table id="tableTab8">
+                <thead>
+                    <tr>
+                        <th>رقم الحاوية</th>
+                        <th>النوع</th>
+                        <th>المنشأ</th>
+                        <th>تاريخ الدخول</th>
+                        <th>تاريخ الخروج</th>
+                        <th>أيام التخزين (جديد)</th>
+                        <th>Storage Days Total</th>
+                        <th>الملاحظات</th>
+                        <th>نوع الشحنة</th>
+                    </tr>
+                </thead>
+                <tbody id="bodyTab8">
+                    <tr><td colspan="9" style="text-align:center; padding:40px;">📂 يرجى تحميل ملف Excel</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer" id="footerMsg"></div>
+</div>  <!-- نهاية container -->
+
+<!-- نافذة اختيار الأعمدة -->
+<div id="columnModal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3><i class="fas fa-columns"></i> اختيار الأعمدة للطباعة / التصدير</h3>
+            <button class="modal-close" onclick="closeColumnModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="columnModalBody"></div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeColumnModal()">إلغاء</button>
+            <button class="btn-primary" id="applyColumnSelection">تطبيق</button>
+        </div>
+    </div>
+</div>
+
+<script src="auth.js"></script>
+<script src="local-server.js"></script>
+<script src="archive.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

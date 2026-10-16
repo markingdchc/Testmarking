@@ -1,0 +1,45 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "admin",
+      "password": "admin123",
+      "fullName": "المدير العام",
+      "role": "admin",
+      "lineIds": ["*"],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    },
+    {
+      "id": 2,
+      "username": "msc",
+      "password": "msc#123",
+      "fullName": "Ahmed Abdelrahman",
+      "role": "viewer",
+      "lineIds": ["MSC", "WEC"],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    },
+    {
+      "id": 3,
+      "username": "yml",
+      "password": "yml#123",
+      "fullName": "Yang Ming Shipping",
+      "role": "viewer",
+      "lineIds": ["YML"],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    },
+    {
+      "id": 4,
+      "username": "zim",
+      "password": "zim#123",
+      "fullName": "Egy Mar",
+      "role": "viewer",
+      "lineIds": ["ZIM"],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    }
+  ],
+  "loginAttempts": {}
+}
