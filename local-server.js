@@ -2,15 +2,29 @@
 // 🖥️ الجسر مع الخادم المحلي (LAN)
 // ============================================================
 
-// ⚙️ الإعدادات
 const LOCAL_SERVER_CONFIG = {
-    // عناوين محتملة للخادم (يُجرب واحد تلو الآخر)
-    HOSTS: [
-        'http://localhost:3000',
-        'http://10.5.50.111:3000',
-        // ✏️ عدّل هذا إلى IP جهاز المدير على الشبكة
-        'http://192.168.1.50:3000'
-    ],
+    // 🆕 استخدم عنوان الصفحة الحالي أولاً (تلقائياً)
+    HOSTS: (() => {
+        let hosts = [];
+        
+        // 1️⃣ عنوان الصفحة الحالي (إذا كان التطبيق يعمل من الخادم نفسه)
+        if (window.location.origin && 
+            !window.location.origin.includes('github.io') &&
+            !window.location.origin.includes('localhost')) {
+            hosts.push(window.location.origin);
+        }
+        
+        // 2️⃣ عناوين احتياطية
+        hosts.push(
+            'http://10.5.50.111:3000',
+            'http://10.63.80.178:3000',
+            'http://localhost:3000',
+            'http://127.0.0.1:3000'
+        );
+        
+        // إزالة المكرر
+        return hosts.filter((v, i, a) => a.indexOf(v) === i);
+    })(),
     API_KEY: 'your-secret-key-change-me',
     TIMEOUT: 3000
 };
@@ -23,12 +37,15 @@ let _localServerAvailable = false;
 // ============================================================
 async function detectLocalServer() {
     console.log("🔍 البحث عن الخادم المحلي...");
+    console.log("📍 عنوان الصفحة:", window.location.origin);
+    console.log("📋 القائمة:", LOCAL_SERVER_CONFIG.HOSTS);
     
     for (const host of LOCAL_SERVER_CONFIG.HOSTS) {
         try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), LOCAL_SERVER_CONFIG.TIMEOUT);
             
+            console.log(`  🧪 اختبار: ${host}`);
             const response = await fetch(host + '/api/ping', {
                 signal: controller.signal
             });
@@ -42,13 +59,13 @@ async function detectLocalServer() {
                 return true;
             }
         } catch (e) {
-            // تجاهل، جرّب التالي
+            console.log(`  ❌ فشل: ${host}`, e.message);
         }
     }
     
     _localServerAvailable = false;
     _activeServerUrl = null;
-    console.log("⚠️ لم يتم العثور على الخادم المحلي — سيتم استخدام GitHub فقط");
+    console.log("⚠️ لم يتم العثور على الخادم المحلي");
     return false;
 }
 
@@ -59,18 +76,31 @@ async function loadLocalArchiveFolders() {
     if (!_localServerAvailable) return null;
     
     try {
-        const response = await fetch(`${_activeServerUrl}/api/archive/list`, {
-            headers: {
-                'X-API-Key': LOCAL_SERVER_CONFIG.API_KEY
-            }
-        });
+        const response = await fetch(
+            `${_activeServerUrl}/api/archive/list?apiKey=${LOCAL_SERVER_CONFIG.API_KEY}`
+        );
         
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const data = await response.json();
         if (!data.success) throw new Error(data.error);
         
-        return data.folders;
+        return data.folders.map(folder => ({
+            name: folder.name,
+            path: `archive/${folder.name}`,
+            files: folder.files.map(f => ({
+                name: f.name,
+                size: f.size,
+                path: `archive/${folder.name}/${f.name}`,
+                download_url: `${_activeServerUrl}${f.url}?apiKey=${LOCAL_SERVER_CONFIG.API_KEY}`,
+                sha: null,
+                modified: f.modified
+            })),
+            filesCount: folder.filesCount,
+            sha: null,
+            source: 'local'
+        }));
+        
     } catch (error) {
         console.error("❌ فشل تحميل الأرشيف المحلي:", error.message);
         return null;
@@ -122,11 +152,8 @@ async function deleteFromLocalServer(folderName, fileName) {
     
     try {
         const response = await fetch(
-            `${_activeServerUrl}/api/archive/file/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`,
-            {
-                method: 'DELETE',
-                headers: { 'X-API-Key': LOCAL_SERVER_CONFIG.API_KEY }
-            }
+            `${_activeServerUrl}/api/archive/file/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}?apiKey=${LOCAL_SERVER_CONFIG.API_KEY}`,
+            { method: 'DELETE' }
         );
         
         return { success: response.ok };
@@ -136,34 +163,22 @@ async function deleteFromLocalServer(folderName, fileName) {
 }
 
 // ============================================================
-// 🔗 بناء رابط الملف (للعرض أو التنزيل)
-// ============================================================
-function getLocalFileUrl(folderName, fileName) {
-    if (!_localServerAvailable) return null;
-    return `${_activeServerUrl}/api/archive/file/${encodeURIComponent(folderName)}/${encodeURIComponent(fileName)}`;
-}
-
-// ============================================================
 // 🚀 كشف الخادم تلقائياً عند فتح الصفحة
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function() {
-    // انتظر قليلاً حتى يُحمّل التطبيق
     setTimeout(async () => {
         let available = await detectLocalServer();
-        
-        // أظهر مؤشر في الواجهة
         updateLocalServerIndicator(available);
     }, 1500);
 });
 
 // ============================================================
-// 🎨 مؤشر حالة الخادم في الواجهة
+// 🎨 مؤشر حالة الخادم
 // ============================================================
 function updateLocalServerIndicator(available) {
     let indicator = document.getElementById('localServerIndicator');
     
     if (!indicator) {
-        // أنشئ المؤشر إن لم يكن موجوداً
         indicator = document.createElement('div');
         indicator.id = 'localServerIndicator';
         indicator.style.cssText = `
