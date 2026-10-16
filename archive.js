@@ -840,86 +840,188 @@ async function refreshArchiveWindow(archiveWindow, filterShip, filterDate) {
 // 📥 تحميل قائمة مجلدات الأرشيف
 // ============================================================
 // ============================================================
-// 📥 تحميل قائمة مجلدات الأرشيف (فلترة الخط على مستوى الملفات)
-// ============================================================
 async function loadArchiveFolders() {
-    // 🆕 أولوية للخادم المحلي (إذا كان متاحاً)
+    console.log("📂 تحميل الأرشيف من جميع المصادر...");
+    
+    let localFolders = [];
+    let githubFolders = [];
+    
+    // ============================================================
+    // 1️⃣ من الخادم المحلي
+    // ============================================================
     if (typeof _localServerAvailable !== 'undefined' && _localServerAvailable) {
-        let localFolders = await loadLocalArchiveFolders();
-        if (localFolders) {
-            console.log("📂 استخدام الأرشيف المحلي");
-            // طبّق فلترة الصلاحيات
-            let user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
-            if (user && user.role !== 'admin' && !user.lineIds.includes('*')) {
-                localFolders = localFolders.filter(f => {
-                    let parts = f.name.split('_');
-                    if (parts.length >= 2) {
-                        let line = parts[parts.length - 2];
-                        return user.lineIds.includes(line);
-                    }
-                    return true;
-                });
+        try {
+            let result = await loadLocalArchiveFolders();
+            if (result) {
+                localFolders = result;
+                console.log(`📂 [المحلي] ${localFolders.length} مجلد`);
             }
-            return localFolders;
+        } catch (e) {
+            console.warn("⚠️ [المحلي] فشل:", e.message);
         }
+    } else {
+        console.log("⏭️ [المحلي] غير متاح");
     }
     
-    // fallback: GitHub
-    console.log("📂 استخدام الأرشيف من GitHub");
+    // ============================================================
+    // 2️⃣ من GitHub
+    // ============================================================
     const token = localStorage.getItem("github_token");
-    const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${ARCHIVE_FOLDER}?ref=${GH_BRANCH}`;
+    if (token) {
+        try {
+            githubFolders = await loadGitHubArchiveFolders(token);
+            console.log(`☁️ [GitHub] ${githubFolders.length} مجلد`);
+        } catch (e) {
+            console.warn("⚠️ [GitHub] فشل:", e.message);
+        }
+    } else {
+        console.log("⏭️ [GitHub] لا يوجد Token");
+    }
+    
+    // ============================================================
+    // 3️⃣ دمج النتائج (المحلي أولاً، ثم GitHub)
+    // ============================================================
+    let merged = mergeArchiveFolders(localFolders, githubFolders);
+    console.log(`🎉 [الأرشيف] ${merged.length} مجلد بعد الدمج`);
+    
+    // فلترة حسب صلاحيات المستخدم
+    let user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+    if (user && user.role !== 'admin' && !user.lineIds.includes('*')) {
+        merged = merged.filter(f => {
+            let parts = f.name.split('_');
+            if (parts.length >= 2) {
+                let line = parts[parts.length - 2];
+                return user.lineIds.includes(line);
+            }
+            return true;
+        });
+    }
+    
+    return merged;
+}
 
+// ============================================================
+// 📥 تحميل الأرشيف من GitHub (دالة منفصلة)
+// ============================================================
+async function loadGitHubArchiveFolders(token) {
+    const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${ARCHIVE_FOLDER}?ref=${GH_BRANCH}`;
+    
     const headers = { "Accept": "application/vnd.github+json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
-
+    
     const response = await fetch(apiUrl, { headers });
-
+    
     if (response.status === 404) return [];
-    if (!response.ok) throw new Error(`فشل الجلب: ${response.status}`);
-
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    
     const contents = await response.json();
     let folders = contents.filter(item => item.type === "dir");
-
-    // 🆕 هل المستخدم مقيّد بخطوط معينة؟
-    let user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
-    let isRestricted = user && user.role !== 'admin' && !user.lineIds.includes('*');
-
+    
     let result = [];
     for (let folder of folders) {
         try {
-            let allFiles = await fetchFolderContents(folder.path, token);
-
-            // 🆕 فلترة الملفات حسب الخط للمستخدمين المقيّدين
-            let visibleFiles = allFiles;
-            if (isRestricted) {
-                visibleFiles = allFiles.filter(file => {
-                    let line = extractLineFromFileName(file.name);
-                    return line && user.lineIds.includes(line);
-                });
-                // تجاهل المجلد إذا لم توجد ملفات مرئية
-                if (visibleFiles.length === 0) continue;
-            }
-
+            let folderFiles = await fetchFolderContents(folder.path, token);
             result.push({
                 name: folder.name,
-                path: folder.path,
-                files: visibleFiles,
-                filesCount: visibleFiles.length,
-                sha: folder.sha
+                path: `archive/${folder.name}`,
+                files: folderFiles.map(f => ({
+                    name: f.name,
+                    size: f.size,
+                    path: f.path,
+                    download_url: f.download_url,
+                    sha: f.sha,
+                    modified: f.modified
+                })),
+                filesCount: folderFiles.length,
+                sha: folder.sha,
+                source: 'github'
             });
         } catch (e) {
             result.push({
                 name: folder.name,
-                path: folder.path,
+                path: `archive/${folder.name}`,
                 files: [],
                 filesCount: 0,
-                sha: folder.sha
+                sha: folder.sha,
+                source: 'github'
             });
         }
     }
-
-    result.sort((a, b) => b.name.localeCompare(a.name));
+    
     return result;
+}
+
+// ============================================================
+// 🔄 دمج المجلدات من المصدرين
+// ============================================================
+function mergeArchiveFolders(localFolders, githubFolders) {
+    let mergedMap = new Map();
+    
+    // 1️⃣ أضف المجلدات من GitHub أولاً
+    for (let folder of githubFolders) {
+        mergedMap.set(folder.name, {
+            name: folder.name,
+            path: folder.path,
+            files: [...folder.files],
+            filesCount: folder.filesCount,
+            sha: folder.sha,
+            source: 'github',
+            hasLocal: false,
+            hasGithub: true
+        });
+    }
+    
+    // 2️⃣ أضف/دمج المجلدات من المحلي
+    for (let folder of localFolders) {
+        if (mergedMap.has(folder.name)) {
+            // موجود في GitHub — دمج الملفات
+            let existing = mergedMap.get(folder.name);
+            
+            // لكل ملف من المحلي، أضفه إذا لم يكن موجوداً (بالمقارنة بالاسم)
+            let existingFileNames = new Set(existing.files.map(f => f.name));
+            
+            for (let localFile of folder.files) {
+                if (!existingFileNames.has(localFile.name)) {
+                    // ملف موجود محلياً فقط
+                    existing.files.push({
+                        ...localFile,
+                        source: 'local'
+                    });
+                } else {
+                    // موجود في الاثنين — فضّل المحلي (أسرع)
+                    let idx = existing.files.findIndex(f => f.name === localFile.name);
+                    if (idx !== -1) {
+                        existing.files[idx] = {
+                            ...existing.files[idx],
+                            source: 'both',
+                            localPath: localFile.path
+                        };
+                    }
+                }
+            }
+            
+            existing.filesCount = existing.files.length;
+            existing.hasLocal = true;
+        } else {
+            // موجود في المحلي فقط
+            mergedMap.set(folder.name, {
+                name: folder.name,
+                path: folder.path,
+                files: folder.files.map(f => ({ ...f, source: 'local' })),
+                filesCount: folder.filesCount,
+                sha: folder.sha,
+                source: 'local',
+                hasLocal: true,
+                hasGithub: false
+            });
+        }
+    }
+    
+    // 3️⃣ حوّل للـ array ورتّب
+    let merged = Array.from(mergedMap.values());
+    merged.sort((a, b) => b.name.localeCompare(a.name));
+    
+    return merged;
 }
 
 // ============================================================
