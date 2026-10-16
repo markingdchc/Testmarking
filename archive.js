@@ -64,12 +64,6 @@ function buildArchiveFolderName() {
 async function autoArchiveContainerFile() {
     console.log("📂 [الأرشيف] بدء النسخ التلقائي...");
 
-    const token = localStorage.getItem("github_token");
-    if (!token) {
-        console.warn("⚠️ [الأرشيف] لا يوجد Token");
-        return { success: false, error: "no token" };
-    }
-
     const fileData = localStorage.getItem("savedExcelFile");
     const originalFileName = localStorage.getItem("savedExcelFileName");
 
@@ -84,13 +78,46 @@ async function autoArchiveContainerFile() {
         return { success: false, error: "unknown ship" };
     }
 
-    const folderName = names.folderName;          // ShipName_Date
+    const folderName = names.folderName;
     const extension = originalFileName.split('.').pop() || 'xls';
-    const reportFileName = `${names.reportBaseName}.${extension}`;  // ShipName_Line_Date.xls
+    const reportFileName = `${names.reportBaseName}.${extension}`;
     const archivePath = `${ARCHIVE_FOLDER}/${folderName}/${reportFileName}`;
 
     console.log(`📁 المجلد: ${folderName}`);
     console.log(`📄 الملف: ${reportFileName}`);
+
+    // ============================================================
+    // 🆕 أولاً: جرّب الخادم المحلي
+    // ============================================================
+    if (typeof _localServerAvailable !== 'undefined' && _localServerAvailable) {
+        console.log("🖥️ محاولة الرفع إلى الخادم المحلي...");
+        try {
+            let localResult = await uploadToLocalServer(folderName, reportFileName, fileData);
+            if (localResult.success) {
+                console.log(`✅ [الأرشيف المحلي] تم النسخ إلى ${localResult.path}`);
+                return { 
+                    success: true, 
+                    path: localResult.path, 
+                    folderName: folderName,
+                    source: 'local'
+                };
+            }
+            console.warn("⚠️ فشل الرفع المحلي، جاري المحاولة عبر GitHub...", localResult.error);
+        } catch (e) {
+            console.warn("⚠️ استثناء في الرفع المحلي:", e.message);
+        }
+    } else {
+        console.log("🖥️ الخادم المحلي غير متاح، سيتم الرفع إلى GitHub");
+    }
+
+    // ============================================================
+    // ثانياً: رفع إلى GitHub (Fallback)
+    // ============================================================
+    const token = localStorage.getItem("github_token");
+    if (!token) {
+        console.warn("⚠️ [الأرشيف] لا يوجد Token ولا خادم محلي");
+        return { success: false, error: "no token and no local server" };
+    }
 
     try {
         const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${archivePath}`;
@@ -106,7 +133,7 @@ async function autoArchiveContainerFile() {
         if (checkResp.ok) {
             const data = await checkResp.json();
             existingSha = data.sha;
-            console.log("🔄 [الأرشيف] الملف موجود، سيتم التحديث");
+            console.log("🔄 [GitHub] الملف موجود، سيتم التحديث");
         }
 
         const body = {
@@ -131,15 +158,14 @@ async function autoArchiveContainerFile() {
             throw new Error(err.message || "فشل الرفع");
         }
 
-        // 🆕 تحديث _info.json (يسجّل كل الخطوط في الملف)
         await updateArchiveInfo(folderName, {
             shipName: names.shipName,
             date: names.date,
             lastUpdate: new Date().toISOString()
         }, names.lineId);
 
-        console.log(`✅ [الأرشيف] تم النسخ إلى ${archivePath}`);
-        return { success: true, path: archivePath, folderName: folderName };
+        console.log(`✅ [GitHub] تم النسخ إلى ${archivePath}`);
+        return { success: true, path: archivePath, folderName: folderName, source: 'github' };
 
     } catch (error) {
         console.error("❌ [الأرشيف] فشل النسخ:", error.message);
