@@ -541,39 +541,99 @@ async function openArchiveInternal(filterShip, filterDate) {
                 });
                 
                 window.deleteFileInArchive = async function(filePath, sha, folderName) {
-                    if (!confirm('هل أنت متأكد من حذف:\\n' + filePath.split('/').pop() + '؟')) return;
+                    let fileName = filePath.split('/').pop();
                     
-                    const token = localStorage.getItem('github_token');
-                    if (!token) {
-                        alert('❌ لا يوجد Token');
-                        return;
+                    if (!confirm('هل أنت متأكد من حذف:\\n' + fileName + '\\n\\n🗑️ من التخزين المحلي (NAS)\\n🗑️ من التخزين السحابي (GitHub)')) return;
+                    
+                    let results = {
+                        local: { success: false, error: null },
+                        github: { success: false, error: null }
+                    };
+                    
+                    // ============================================================
+                    // 1️⃣ حذف من الخادم المحلي (NAS)
+                    // ============================================================
+                    if (typeof _localServerAvailable !== 'undefined' && _localServerAvailable) {
+                        console.log('🖥️ [1/2] حذف من المحلي:', fileName);
+                        try {
+                            let localResult = await window.archiveOpener.deleteFromLocalServer(folderName, fileName);
+                            if (localResult.success) {
+                                results.local.success = true;
+                                console.log('✅ [المحلي] تم الحذف');
+                            } else {
+                                results.local.error = localResult.error;
+                                console.warn('⚠️ [المحلي] فشل:', localResult.error);
+                            }
+                        } catch (e) {
+                            results.local.error = e.message;
+                            console.warn('⚠️ [المحلي] استثناء:', e.message);
+                        }
+                    } else {
+                        console.log('⏭️ [المحلي] الخادم غير متاح');
+                        results.local.error = 'الخادم المحلي غير متاح';
                     }
                     
-                    try {
-                        const apiUrl = 'https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/' + filePath;
-                        const resp = await fetch(apiUrl, {
-                            method: 'DELETE',
-                            headers: {
-                                'Authorization': 'Bearer ' + token,
-                                'Accept': 'application/vnd.github+json',
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                message: 'Delete ' + filePath.split('/').pop(),
-                                sha: sha,
-                                branch: '${GH_BRANCH}'
-                            })
-                        });
-                        
-                        if (!resp.ok) {
-                            const err = await resp.json();
-                            throw new Error(err.message);
+                    // ============================================================
+                    // 2️⃣ حذف من GitHub
+                    // ============================================================
+                    const token = localStorage.getItem('github_token');
+                    if (token && sha) {
+                        console.log('☁️ [2/2] حذف من GitHub:', fileName);
+                        try {
+                            const apiUrl = 'https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/' + filePath;
+                            const resp = await fetch(apiUrl, {
+                                method: 'DELETE',
+                                headers: {
+                                    'Authorization': 'Bearer ' + token,
+                                    'Accept': 'application/vnd.github+json',
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    message: 'Delete ' + fileName,
+                                    sha: sha,
+                                    branch: '${GH_BRANCH}'
+                                })
+                            });
+                            
+                            if (resp.ok) {
+                                results.github.success = true;
+                                console.log('✅ [GitHub] تم الحذف');
+                            } else {
+                                const err = await resp.json();
+                                results.github.error = err.message;
+                                console.warn('⚠️ [GitHub] فشل:', err.message);
+                            }
+                        } catch (e) {
+                            results.github.error = e.message;
+                            console.warn('⚠️ [GitHub] استثناء:', e.message);
                         }
-                        
-                        alert('✅ تم الحذف');
+                    } else {
+                        console.log('⏭️ [GitHub] لا يوجد Token أو SHA');
+                        results.github.error = !token ? 'لا يوجد Token' : 'لا يوجد SHA';
+                    }
+                    
+                    // ============================================================
+                    // 3️⃣ النتيجة النهائية
+                    // ============================================================
+                    let messages = [];
+                    
+                    if (results.local.success) {
+                        messages.push('✅ المحلي (NAS)');
+                    } else {
+                        messages.push('❌ المحلي: ' + (results.local.error || 'فشل'));
+                    }
+                    
+                    if (results.github.success) {
+                        messages.push('✅ السحابي (GitHub)');
+                    } else {
+                        messages.push('❌ السحابي: ' + (results.github.error || 'فشل'));
+                    }
+                    
+                    if (results.local.success || results.github.success) {
+                        alert('✅ تم الحذف:\\n\\n' + messages.join('\\n'));
                         await window.refreshArchiveContent();
-                    } catch (error) {
-                        alert('❌ فشل الحذف: ' + error.message);
+                    } else {
+                        alert('❌ فشل الحذف من كلا المكانين:\\n\\n' + messages.join('\\n'));
                     }
                 };
                 
