@@ -1089,66 +1089,122 @@ window.uploadFilesToArchive = async function(folderName, fileDataList) {
 // ============================================================
 // 📤 رفع ملف واحد كـ base64
 // ============================================================
+// ============================================================
+// 📤 رفع ملف واحد كـ base64 (المحلي + GitHub معاً)
+// ============================================================
 async function uploadBase64ToArchive(folderName, fileName, base64Data) {
-    // 🆕 جرّب الخادم المحلي أولاً
-    if (typeof _localServerAvailable !== 'undefined' && _localServerAvailable) {
-        let result = await uploadToLocalServer(folderName, fileName, base64Data);
-        if (result.success) {
-            console.log("✅ تم الرفع إلى الخادم المحلي:", result.path);
-            // ✨ اختياري: نسخة احتياطية على GitHub
-            // (يمكن تفعيل هذا لاحقاً)
-            return result;
-        }
-        console.warn("⚠️ فشل الرفع المحلي، جاري المحاولة عبر GitHub...");
-    }
-    
-    // fallback: GitHub
-    const token = localStorage.getItem("github_token");
-    // ... (باقي الكود كما هو)
-    if (!token) throw new Error("لا يوجد Token");
-    
     let cleanName = fileName.replace(/[^\w\u0600-\u06FF.\-]/g, '_');
     const filePath = `${ARCHIVE_FOLDER}/${folderName}/${cleanName}`;
-    const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${filePath}`;
     
-    let existingSha = null;
-    try {
-        const checkResp = await fetch(`${apiUrl}?ref=${GH_BRANCH}`, {
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Accept": "application/vnd.github+json"
-            }
-        });
-        if (checkResp.ok) {
-            const data = await checkResp.json();
-            existingSha = data.sha;
-        }
-    } catch (e) {}
-    
-    const body = {
-        message: `Upload ${cleanName} to ${folderName}`,
-        content: base64Data,
-        branch: GH_BRANCH
+    let result = {
+        success: false,
+        local: { success: false, path: null, error: null },
+        github: { success: false, path: null, error: null }
     };
-    if (existingSha) body.sha = existingSha;
     
-    const resp = await fetch(apiUrl, {
-        method: "PUT",
-        headers: {
-            "Authorization": `Bearer ${token}`,
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-    });
-    
-    if (!resp.ok) {
-        const err = await resp.json();
-        return { success: false, error: err.message };
+    // ============================================================
+    // 1️⃣ رفع إلى الخادم المحلي (NAS) — دائماً
+    // ============================================================
+    if (typeof _localServerAvailable !== 'undefined' && _localServerAvailable) {
+        console.log("🖥️ [1/2] رفع إلى الخادم المحلي:", cleanName);
+        try {
+            let localResult = await uploadToLocalServer(folderName, cleanName, base64Data);
+            if (localResult.success) {
+                result.local.success = true;
+                result.local.path = localResult.path;
+                console.log(`✅ [المحلي] تم: ${localResult.path}`);
+            } else {
+                result.local.error = localResult.error;
+                console.warn(`⚠️ [المحلي] فشل: ${localResult.error}`);
+            }
+        } catch (e) {
+            result.local.error = e.message;
+            console.warn(`⚠️ [المحلي] استثناء: ${e.message}`);
+        }
+    } else {
+        console.log("⏭️ [المحلي] الخادم المحلي غير متاح");
+        result.local.error = 'الخادم المحلي غير متاح';
     }
     
-    await updateArchiveInfo(folderName, {});
-    return { success: true };
+    // ============================================================
+    // 2️⃣ رفع إلى GitHub — دائماً (نسخة احتياطية)
+    // ============================================================
+    const token = localStorage.getItem("github_token");
+    if (token) {
+        console.log("☁️ [2/2] رفع إلى GitHub:", cleanName);
+        try {
+            const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${filePath}`;
+            let existingSha = null;
+            
+            const checkResp = await fetch(`${apiUrl}?ref=${GH_BRANCH}`, {
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Accept": "application/vnd.github+json"
+                }
+            });
+            if (checkResp.ok) {
+                const data = await checkResp.json();
+                existingSha = data.sha;
+                console.log("🔄 [GitHub] الملف موجود، سيتم التحديث");
+            }
+            
+            const body = {
+                message: `Upload ${cleanName} to ${folderName}`,
+                content: base64Data,
+                branch: GH_BRANCH
+            };
+            if (existingSha) body.sha = existingSha;
+            
+            const resp = await fetch(apiUrl, {
+                method: "PUT",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Accept": "application/vnd.github+json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(body)
+            });
+            
+            if (resp.ok) {
+                result.github.success = true;
+                result.github.path = filePath;
+                console.log(`✅ [GitHub] تم: ${filePath}`);
+                
+                // تحديث _info.json
+                await updateArchiveInfo(folderName, {});
+            } else {
+                const err = await resp.json();
+                result.github.error = err.message;
+                console.warn(`⚠️ [GitHub] فشل: ${err.message}`);
+            }
+        } catch (e) {
+            result.github.error = e.message;
+            console.warn(`⚠️ [GitHub] استثناء: ${e.message}`);
+        }
+    } else {
+        console.log("⏭️ [GitHub] لا يوجد Token");
+        result.github.error = 'لا يوجد Token';
+    }
+    
+    // ============================================================
+    // 3️⃣ النتيجة النهائية
+    // ============================================================
+    result.success = result.local.success || result.github.success;
+    
+    if (result.local.success && result.github.success) {
+        console.log("🎉 [رفع] تم النسخ إلى المحلي + GitHub ✅✅");
+    } else if (result.local.success) {
+        console.log("✅ [رفع] تم النسخ إلى المحلي فقط");
+    } else if (result.github.success) {
+        console.log("✅ [رفع] تم النسخ إلى GitHub فقط");
+    } else {
+        console.log("❌ [رفع] فشل في كلا المكانين");
+    }
+    
+    // للتوافق مع الكود القديم (يرجع path)
+    result.path = result.local.path || result.github.path;
+    
+    return result;
 }
 
 // ============================================================
