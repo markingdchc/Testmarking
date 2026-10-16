@@ -1500,13 +1500,9 @@ window.addEventListener('message', async (event) => {
 
 
 // ============================================================
-// 🔄 مزامنة الأرشيف (GitHub ↔ المحلي) — داخل نافذة Modal
-// ============================================================
-// ============================================================
-// 🔄 مزامنة الأرشيف (GitHub ↔ المحلي) — داخل نافذة الهدف
+// 🔄 مزامنة الأرشيف — نسخة احترافية مع سرعة وشريط تقدم
 // ============================================================
 window.syncArchive = async function(targetWindow) {
-    // 🆕 استخدام نافذة الهدف (نافذة الأرشيف)
     const win = targetWindow || window;
     const doc = win.document;
     
@@ -1518,53 +1514,141 @@ window.syncArchive = async function(targetWindow) {
         return;
     }
     
-    // 🆕 إنشاء Modal داخل نافذة الهدف
+    // ============================================================
+    // 🆕 إنشاء Modal
+    // ============================================================
     let modal = doc.getElementById('syncModal');
-    if (!modal) {
-        modal = doc.createElement('div');
-        modal.id = 'syncModal';
-        modal.style.cssText = `
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.85);
-            z-index: 99999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            direction: rtl;
-        `;
-        modal.innerHTML = `
-            <div style="background: white; border-radius: 16px; width: 90%; max-width: 800px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
-                <div style="background: #0a3d62; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin: 0; font-size: 18px;">🔄 مزامنة الأرشيف</h2>
-                    <button id="syncCloseBtn" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 13px;">✖ إغلاق</button>
-                </div>
-                <div style="padding: 20px; overflow-y: auto; flex: 1;">
-                    <div id="syncStatus" style="padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px; background: #e7f3ff; color: #004085;">⏳ جاري الفحص...</div>
-                    <div style="height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden; margin-bottom: 15px;">
-                        <div id="syncProgressBar" style="height: 100%; background: linear-gradient(90deg, #0a3d62, #17a2b8); transition: width 0.3s; width: 0%;"></div>
-                    </div>
-                    <div id="syncSummary" style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;"></div>
-                    <div id="syncLog" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 12px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 12px; direction: ltr; text-align: left;"></div>
-                </div>
+    if (modal) modal.remove();
+    
+    modal = doc.createElement('div');
+    modal.id = 'syncModal';
+    modal.style.cssText = `
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.85);
+        z-index: 99999;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+        direction: rtl;
+    `;
+    modal.innerHTML = `
+        <div style="background: white; border-radius: 16px; width: 95%; max-width: 900px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
+            <div style="background: #0a3d62; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0; font-size: 18px;">🔄 مزامنة الأرشيف</h2>
+                <button id="syncCloseBtn" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 13px;">✖ إغلاق</button>
             </div>
-        `;
-        doc.body.appendChild(modal);
-        
-        doc.getElementById('syncCloseBtn').onclick = function() {
-            doc.getElementById('syncModal').remove();
-        };
+            <div style="padding: 20px; overflow-y: auto; flex: 1;">
+                
+                <!-- الحالة -->
+                <div id="syncStatus" style="padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px; background: #e7f3ff; color: #004085; font-weight: bold;">
+                    ⏳ جاري الفحص...
+                </div>
+                
+                <!-- شريط التقدم الرئيسي -->
+                <div style="background: #e9ecef; border-radius: 10px; overflow: hidden; height: 30px; margin-bottom: 10px; position: relative;">
+                    <div id="syncProgressBar" style="height: 100%; background: linear-gradient(90deg, #0a3d62, #17a2b8); transition: width 0.3s; width: 0%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;"></div>
+                    <div id="syncProgressText" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; color: #0a3d62; mix-blend-mode: difference;">0%</div>
+                </div>
+                
+                <!-- الإحصائيات -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 11px; color: #6c757d;">⏱️ الوقت المنقضي</div>
+                        <div id="syncElapsed" style="font-size: 16px; font-weight: bold; color: #0a3d62;">00:00</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 11px; color: #6c757d;">⏳ الوقت المتبقي</div>
+                        <div id="syncRemaining" style="font-size: 16px; font-weight: bold; color: #e67e22;">--:--</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 11px; color: #6c757d;">⚡ السرعة الحالية</div>
+                        <div id="syncSpeed" style="font-size: 16px; font-weight: bold; color: #28a745;">0 KB/s</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 11px; color: #6c757d;">📊 متوسط السرعة</div>
+                        <div id="syncAvgSpeed" style="font-size: 16px; font-weight: bold; color: #17a2b8;">0 KB/s</div>
+                    </div>
+                </div>
+                
+                <!-- الملف الحالي -->
+                <div id="syncCurrentFile" style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 13px; display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-weight: bold; color: #856404;">📄 <span id="currentFileName">—</span></span>
+                        <span id="currentFileSize" style="color: #856404; font-size: 12px;">—</span>
+                    </div>
+                    <div style="background: #fff; border-radius: 5px; overflow: hidden; height: 12px;">
+                        <div id="currentFileProgress" style="height: 100%; background: linear-gradient(90deg, #e67e22, #f39c12); transition: width 0.2s; width: 0%;"></div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; color: #856404;">
+                        <span id="currentFileStatus">—</span>
+                        <span id="currentFileSpeed">0 KB/s</span>
+                    </div>
+                </div>
+                
+                <!-- ملخص -->
+                <div id="syncSummary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; margin-bottom: 15px;"></div>
+                
+                <!-- السجل -->
+                <div id="syncLog" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 11px; direction: ltr; text-align: left;"></div>
+            </div>
+        </div>
+    `;
+    doc.body.appendChild(modal);
+    
+    doc.getElementById('syncCloseBtn').onclick = function() {
+        if (window._syncAbortController) {
+            window._syncAbortController.abort();
+        }
+        modal.remove();
+    };
+    
+    // ============================================================
+    // 🆕 دوال مساعدة
+    // ============================================================
+    let startTime = Date.now();
+    let totalBytes = 0;
+    let transferredBytes = 0;
+    let currentFileStartTime = 0;
+    let currentFileLoaded = 0;
+    let currentFileTotal = 0;
+    let lastSpeedUpdate = Date.now();
+    let lastBytesSnapshot = 0;
+    let speedHistory = [];
+    
+    window._syncAbortController = new AbortController();
+    
+    function formatTime(seconds) {
+        if (!isFinite(seconds) || seconds < 0) return '--:--';
+        let h = Math.floor(seconds / 3600);
+        let m = Math.floor((seconds % 3600) / 60);
+        let s = Math.floor(seconds % 60);
+        if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }
     
-    // دوال مساعدة
+    function formatSpeed(bytesPerSec) {
+        if (!isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 KB/s';
+        if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s';
+        if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+        return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s';
+    }
+    
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+    
     function syncLog(msg, type = 'info') {
         let log = doc.getElementById('syncLog');
         if (!log) return;
         let entry = doc.createElement('div');
-        entry.style.cssText = 'padding: 3px 0; border-bottom: 1px solid #e9ecef; ' + 
+        entry.style.cssText = 'padding: 2px 0; ' + 
             (type === 'success' ? 'color: #28a745;' : 
              type === 'error' ? 'color: #dc3545;' : 
+             type === 'warning' ? 'color: #e67e22;' : 
              'color: #17a2b8;');
         let time = new Date().toLocaleTimeString('ar-EG');
         entry.textContent = '[' + time + '] ' + msg;
@@ -1581,42 +1665,199 @@ window.syncArchive = async function(targetWindow) {
             warning: 'background: #fff3cd; color: #856404;',
             error: 'background: #f8d7da; color: #721c24;'
         };
-        st.style.cssText = 'padding: 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px; ' + (colors[type] || colors.info);
+        st.style.cssText = 'padding: 12px 15px; border-radius: 10px; margin-bottom: 15px; font-size: 14px; font-weight: bold; ' + (colors[type] || colors.info);
         st.textContent = msg;
     }
     
-    function syncProgress(pct) {
+    function syncProgress(pct, text) {
         let bar = doc.getElementById('syncProgressBar');
+        let txt = doc.getElementById('syncProgressText');
         if (bar) bar.style.width = pct + '%';
+        if (txt) txt.textContent = text || (pct + '%');
     }
     
     function syncSummary(items) {
         let html = '';
         for (let item of items) {
-            html += '<div style="flex: 1; min-width: 100px; background: #f8f9fa; padding: 12px; border-radius: 10px; text-align: center;">' +
-                '<div style="font-size: 22px; font-weight: bold; color: #0a3d62;">' + item.num + '</div>' +
-                '<div style="font-size: 12px; color: #6c757d;">' + item.lbl + '</div></div>';
+            html += '<div style="background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center;">' +
+                '<div style="font-size: 20px; font-weight: bold; color: ' + (item.color || '#0a3d62') + ';">' + item.num + '</div>' +
+                '<div style="font-size: 11px; color: #6c757d;">' + item.lbl + '</div></div>';
         }
         doc.getElementById('syncSummary').innerHTML = html;
     }
     
+    function updateTimer() {
+        let elapsed = (Date.now() - startTime) / 1000;
+        let elapsedEl = doc.getElementById('syncElapsed');
+        if (elapsedEl) elapsedEl.textContent = formatTime(elapsed);
+        
+        // حساب الوقت المتبقي
+        if (transferredBytes > 0 && totalBytes > 0) {
+            let rate = transferredBytes / elapsed;
+            let remainingBytes = totalBytes - transferredBytes;
+            let remaining = remainingBytes / rate;
+            let remainingEl = doc.getElementById('syncRemaining');
+            if (remainingEl) remainingEl.textContent = formatTime(remaining);
+        }
+        
+        // حساب السرعة
+        let now = Date.now();
+        if (now - lastSpeedUpdate >= 1000) {
+            let timeDiff = (now - lastSpeedUpdate) / 1000;
+            let bytesDiff = transferredBytes - lastBytesSnapshot;
+            let currentSpeed = bytesDiff / timeDiff;
+            
+            if (currentSpeed > 0) {
+                speedHistory.push(currentSpeed);
+                if (speedHistory.length > 10) speedHistory.shift();
+            }
+            
+            let avgSpeed = speedHistory.length > 0 
+                ? speedHistory.reduce((a,b) => a+b, 0) / speedHistory.length 
+                : 0;
+            
+            let speedEl = doc.getElementById('syncSpeed');
+            let avgEl = doc.getElementById('syncAvgSpeed');
+            if (speedEl) speedEl.textContent = formatSpeed(currentSpeed);
+            if (avgEl) avgEl.textContent = formatSpeed(avgSpeed);
+            
+            lastSpeedUpdate = now;
+            lastBytesSnapshot = transferredBytes;
+        }
+    }
+    
+    let timerInterval = setInterval(updateTimer, 500);
+    
+    function showCurrentFile(fileName, fileSize) {
+        let el = doc.getElementById('syncCurrentFile');
+        if (!el) return;
+        el.style.display = 'block';
+        doc.getElementById('currentFileName').textContent = fileName;
+        doc.getElementById('currentFileSize').textContent = formatBytes(fileSize);
+        doc.getElementById('currentFileProgress').style.width = '0%';
+        doc.getElementById('currentFileStatus').textContent = '0%';
+        doc.getElementById('currentFileSpeed').textContent = '0 KB/s';
+        
+        currentFileStartTime = Date.now();
+        currentFileLoaded = 0;
+        currentFileTotal = fileSize;
+    }
+    
+    function updateCurrentFile(loaded, total) {
+        if (total <= 0) return;
+        let pct = Math.round((loaded / total) * 100);
+        let bar = doc.getElementById('currentFileProgress');
+        let status = doc.getElementById('currentFileStatus');
+        let speedEl = doc.getElementById('currentFileSpeed');
+        
+        if (bar) bar.style.width = pct + '%';
+        if (status) status.textContent = pct + '% (' + formatBytes(loaded) + ' / ' + formatBytes(total) + ')';
+        
+        let elapsed = (Date.now() - currentFileStartTime) / 1000;
+        if (elapsed > 0.5 && speedEl) {
+            let speed = loaded / elapsed;
+            speedEl.textContent = formatSpeed(speed);
+        }
+        
+        // تحديث الإجمالي
+        transferredBytes = (totalBytes - currentFileTotal) + loaded;
+    }
+    
+    function hideCurrentFile() {
+        let el = doc.getElementById('syncCurrentFile');
+        if (el) el.style.display = 'none';
+    }
+    
+    // ============================================================
+    // 🆕 رفع ملف مع تتبع التقدم
+    // ============================================================
+    async function uploadWithProgress(url, options, fileName, fileSize) {
+        showCurrentFile(fileName, fileSize);
+        
+        return new Promise((resolve, reject) => {
+            let xhr = new XMLHttpRequest();
+            
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    updateCurrentFile(e.loaded, e.total);
+                }
+            });
+            
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve({ ok: true, status: xhr.status, json: () => JSON.parse(xhr.responseText) });
+                } else {
+                    resolve({ ok: false, status: xhr.status, json: () => JSON.parse(xhr.responseText || '{}') });
+                }
+            });
+            
+            xhr.addEventListener('error', () => reject(new Error('Network error')));
+            xhr.addEventListener('abort', () => reject(new Error('Aborted')));
+            
+            xhr.open(options.method || 'GET', url);
+            if (options.headers) {
+                for (let key in options.headers) {
+                    xhr.setRequestHeader(key, options.headers[key]);
+                }
+            }
+            
+            xhr.send(options.body || null);
+        });
+    }
+    
+    // ============================================================
+    // 🆕 تنزيل ملف مع تتبع التقدم
+    // ============================================================
+    async function downloadWithProgress(url, fileName, expectedSize) {
+        showCurrentFile(fileName, expectedSize);
+        
+        let response = await fetch(url);
+        let contentLength = parseInt(response.headers.get('content-length')) || expectedSize;
+        let reader = response.body.getReader();
+        let chunks = [];
+        let loaded = 0;
+        
+        currentFileTotal = contentLength;
+        
+        while (true) {
+            let { done, value } = await reader.read();
+            if (done) break;
+            
+            chunks.push(value);
+            loaded += value.length;
+            updateCurrentFile(loaded, contentLength);
+        }
+        
+        // تجميع القطع
+        let allChunks = new Uint8Array(loaded);
+        let position = 0;
+        for (let chunk of chunks) {
+            allChunks.set(chunk, position);
+            position += chunk.length;
+        }
+        
+        return allChunks;
+    }
+    
+    // ============================================================
+    // 🚀 البدء
+    // ============================================================
     try {
-        // 1️⃣ جلب القوائم
         syncStatus("⏳ جاري تحميل قائمة المحلي...");
         syncLog("📂 جلب قائمة المحلي...");
         
         let localFolders = await loadLocalArchiveFolders() || [];
         syncLog(`✅ المحلي: ${localFolders.length} مجلد`, 'success');
-        syncProgress(20);
+        syncProgress(10);
         
         syncStatus("⏳ جاري تحميل قائمة GitHub...");
         syncLog("☁️ جلب قائمة GitHub...");
         
         let githubFolders = await loadGitHubArchiveFolders(token);
         syncLog(`✅ GitHub: ${githubFolders.length} مجلد`, 'success');
-        syncProgress(40);
+        syncProgress(20);
         
-        // 2️⃣ بناء Maps
+        // بناء Maps
         let localMap = new Map();
         for (let folder of localFolders) {
             let filesMap = new Map();
@@ -1631,7 +1872,7 @@ window.syncArchive = async function(targetWindow) {
             githubMap.set(folder.name, { folder, filesMap });
         }
         
-        // 3️⃣ حساب الفروقات
+        // حساب الفروقات
         let toDownload = [];
         let toUpload = [];
         
@@ -1653,39 +1894,46 @@ window.syncArchive = async function(targetWindow) {
             }
         }
         
-        // 4️⃣ الملخص
+        // حساب الحجم الإجمالي
+        totalBytes = 0;
+        for (let item of toUpload) totalBytes += item.file.size || 0;
+        for (let item of toDownload) totalBytes += item.file.size || 0;
+        
         syncSummary([
-            { num: localFolders.length, lbl: 'مجلدات محلية' },
-            { num: githubFolders.length, lbl: 'مجلدات GitHub' },
-            { num: toUpload.length, lbl: '📤 يحتاج رفع' },
-            { num: toDownload.length, lbl: '📥 يحتاج تنزيل' }
+            { num: localFolders.length, lbl: 'مجلدات محلية', color: '#0a3d62' },
+            { num: githubFolders.length, lbl: 'مجلدات GitHub', color: '#17a2b8' },
+            { num: toUpload.length, lbl: '📤 رفع', color: '#28a745' },
+            { num: toDownload.length, lbl: '📥 تنزيل', color: '#e67e22' }
         ]);
         
-        syncLog(`📤 ملفات على المحلي فقط: ${toUpload.length}`, 'info');
-        syncLog(`📥 ملفات على GitHub فقط: ${toDownload.length}`, 'info');
-        syncProgress(50);
+        syncLog(`📤 ملفات للرفع: ${toUpload.length} (${formatBytes(toUpload.reduce((s,i) => s + (i.file.size||0), 0))})`, 'warning');
+        syncLog(`📥 ملفات للتنزيل: ${toDownload.length} (${formatBytes(toDownload.reduce((s,i) => s + (i.file.size||0), 0))})`, 'warning');
+        syncProgress(25);
         
         if (toUpload.length === 0 && toDownload.length === 0) {
-            syncStatus("✅ الأرشيف متزامن تماماً", 'success');
+            syncStatus("✅ الأرشيف متزامن تماماً — لا توجد فروقات", 'success');
             syncLog("✅ لا توجد فروقات", 'success');
+            clearInterval(timerInterval);
             return;
         }
         
-        // 5️⃣ تأكيد
-        syncStatus("⏸️ بانتظار التأكيد...", 'warning');
-        
-        let confirmMsg = `🔄 المزامنة على وشك البدء:\n\n`;
-        confirmMsg += `📤 رفع ${toUpload.length} ملف من المحلي → GitHub\n`;
-        confirmMsg += `📥 تنزيل ${toDownload.length} ملف من GitHub → المحلي\n\n`;
+        // تأكيد
+        let confirmMsg = `🔄 المزامنة:\n\n`;
+        confirmMsg += `📤 رفع: ${toUpload.length} ملف\n`;
+        confirmMsg += `📥 تنزيل: ${toDownload.length} ملف\n`;
+        confirmMsg += `📊 الحجم الكلي: ${formatBytes(totalBytes)}\n\n`;
         confirmMsg += `هل تريد المتابعة؟`;
         
         if (!win.confirm(confirmMsg)) {
             syncLog("⏹️ تم الإلغاء", 'error');
             syncStatus("⏹️ تم الإلغاء", 'error');
+            clearInterval(timerInterval);
             return;
         }
         
-        // 6️⃣ رفع الملفات
+        // ============================================================
+        // رفع الملفات
+        // ============================================================
         let uploadSuccess = 0, uploadFail = 0;
         
         if (toUpload.length > 0) {
@@ -1695,10 +1943,11 @@ window.syncArchive = async function(targetWindow) {
                 let { folderName, fileName, file } = toUpload[i];
                 
                 try {
-                    syncLog(`📤 (${i+1}/${toUpload.length}) ${fileName}...`, 'info');
+                    syncLog(`📤 (${i+1}/${toUpload.length}) ${fileName}`, 'warning');
                     
-                    let fileResp = await fetch(file.download_url);
-                    let arrayBuffer = await fileResp.arrayBuffer();
+                    // تحميل من المحلي
+                    let arrayBuffer = await downloadWithProgress(file.download_url, fileName, file.size);
+                    
                     let bytes = new Uint8Array(arrayBuffer);
                     let binary = '';
                     let chunkSize = 8192;
@@ -1707,6 +1956,7 @@ window.syncArchive = async function(targetWindow) {
                     }
                     let base64Data = btoa(binary);
                     
+                    // رفع لـ GitHub
                     let cleanName = fileName.replace(/[^\w\u0600-\u06FF.\-]/g, '_');
                     let apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/archive/${folderName}/${cleanName}`;
                     
@@ -1726,35 +1976,44 @@ window.syncArchive = async function(targetWindow) {
                     };
                     if (existingSha) body.sha = existingSha;
                     
-                    let uploadResp = await fetch(apiUrl, {
-                        method: "PUT",
+                    let uploadResp = await uploadWithProgress(apiUrl, {
+                        method: 'PUT',
                         headers: {
                             "Authorization": `Bearer ${token}`,
                             "Accept": "application/vnd.github+json",
                             "Content-Type": "application/json"
                         },
                         body: JSON.stringify(body)
-                    });
+                    }, fileName, base64Data.length);
                     
                     if (uploadResp.ok) {
                         uploadSuccess++;
-                        syncLog(`  ✅ ${fileName}`, 'success');
+                        syncLog(`  ✅ تم الرفع`, 'success');
                     } else {
                         uploadFail++;
                         let err = await uploadResp.json();
-                        syncLog(`  ❌ ${fileName}: ${err.message}`, 'error');
+                        syncLog(`  ❌ فشل: ${err.message}`, 'error');
                     }
                     
                 } catch (e) {
+                    if (e.message === 'Aborted') {
+                        syncLog(`  ⏹️ تم الإلغاء`, 'error');
+                        clearInterval(timerInterval);
+                        return;
+                    }
                     uploadFail++;
-                    syncLog(`  ❌ ${fileName}: ${e.message}`, 'error');
+                    syncLog(`  ❌ ${e.message}`, 'error');
                 }
                 
-                syncProgress(50 + Math.round(((i + 1) / toUpload.length) * 25));
+                hideCurrentFile();
+                let baseProgress = 25 + ((i + 1) / toUpload.length) * 35;
+                syncProgress(Math.round(baseProgress));
             }
         }
         
-        // 7️⃣ تنزيل الملفات
+        // ============================================================
+        // تنزيل الملفات
+        // ============================================================
         let downloadSuccess = 0, downloadFail = 0;
         
         if (toDownload.length > 0) {
@@ -1764,10 +2023,10 @@ window.syncArchive = async function(targetWindow) {
                 let { folderName, fileName, file } = toDownload[i];
                 
                 try {
-                    syncLog(`📥 (${i+1}/${toDownload.length}) ${fileName}...`, 'info');
+                    syncLog(`📥 (${i+1}/${toDownload.length}) ${fileName}`, 'warning');
                     
-                    let fileResp = await fetch(file.download_url);
-                    let arrayBuffer = await fileResp.arrayBuffer();
+                    let arrayBuffer = await downloadWithProgress(file.download_url, fileName, file.size);
+                    
                     let bytes = new Uint8Array(arrayBuffer);
                     let binary = '';
                     let chunkSize = 8192;
@@ -1780,45 +2039,65 @@ window.syncArchive = async function(targetWindow) {
                     
                     if (result.success) {
                         downloadSuccess++;
-                        syncLog(`  ✅ ${fileName}`, 'success');
+                        syncLog(`  ✅ تم التنزيل`, 'success');
                     } else {
                         downloadFail++;
-                        syncLog(`  ❌ ${fileName}: ${result.error}`, 'error');
+                        syncLog(`  ❌ ${result.error}`, 'error');
                     }
                     
                 } catch (e) {
+                    if (e.message === 'Aborted') {
+                        syncLog(`  ⏹️ تم الإلغاء`, 'error');
+                        clearInterval(timerInterval);
+                        return;
+                    }
                     downloadFail++;
-                    syncLog(`  ❌ ${fileName}: ${e.message}`, 'error');
+                    syncLog(`  ❌ ${e.message}`, 'error');
                 }
                 
-                syncProgress(75 + Math.round(((i + 1) / toDownload.length) * 25));
+                hideCurrentFile();
+                let baseProgress = 60 + ((i + 1) / toDownload.length) * 35;
+                syncProgress(Math.round(baseProgress));
             }
         }
         
-        // 8️⃣ النتيجة
-        syncProgress(100);
+        // ============================================================
+        // النتيجة
+        // ============================================================
+        clearInterval(timerInterval);
+        syncProgress(100, '100% ✅');
         
         let totalSuccess = uploadSuccess + downloadSuccess;
         let totalFail = uploadFail + downloadFail;
+        let totalElapsed = (Date.now() - startTime) / 1000;
+        let avgSpeed = totalBytes > 0 ? totalBytes / totalElapsed : 0;
         
         if (totalFail === 0) {
-            syncStatus(`🎉 اكتملت المزامنة بنجاح (${totalSuccess} ملف)`, 'success');
+            syncStatus(`🎉 اكتملت المزامنة بنجاح (${totalSuccess} ملف في ${formatTime(totalElapsed)})`, 'success');
         } else {
             syncStatus(`⚠️ اكتملت مع أخطاء: نجح ${totalSuccess}، فشل ${totalFail}`, 'warning');
         }
         
         syncSummary([
-            { num: uploadSuccess, lbl: '✅ رُفع' },
-            { num: downloadSuccess, lbl: '✅ نُزّل' },
-            { num: uploadFail + downloadFail, lbl: '❌ فشل' }
+            { num: uploadSuccess, lbl: '✅ رُفع', color: '#28a745' },
+            { num: downloadSuccess, lbl: '✅ نُزّل', color: '#17a2b8' },
+            { num: uploadFail + downloadFail, lbl: '❌ فشل', color: '#dc3545' }
         ]);
         
-        syncLog("═══════════════════════", 'info');
+        syncLog("═══════════════════════════", 'info');
+        syncLog(`⏱️ الوقت: ${formatTime(totalElapsed)}`, 'info');
+        syncLog(`📊 الحجم الكلي: ${formatBytes(totalBytes)}`, 'info');
+        syncLog(`⚡ متوسط السرعة: ${formatSpeed(avgSpeed)}`, 'info');
         syncLog(`📤 رُفع: ${uploadSuccess} / ${toUpload.length}`, 'info');
         syncLog(`📥 نُزّل: ${downloadSuccess} / ${toDownload.length}`, 'info');
         syncLog(`❌ فشل: ${totalFail}`, 'info');
         
+        // تحديث الوقت النهائي
+        let remainingEl = doc.getElementById('syncRemaining');
+        if (remainingEl) remainingEl.textContent = '00:00';
+        
     } catch (error) {
+        clearInterval(timerInterval);
         console.error("❌ خطأ في المزامنة:", error);
         syncStatus("❌ فشلت المزامنة: " + error.message, 'error');
         syncLog("❌ " + error.message, 'error');
