@@ -486,6 +486,14 @@ setTimeout(() => {
 }, 300);
 
             document.getElementById("footerMsg").innerHTML = `✅ تم تحميل: ${file.name} | ...`;
+
+			// ===== 🆕 تطبيق تفضيلات الأعمدة بعد المعالجة =====
+			setTimeout(function() {
+				if (typeof applySavedColumnPreferences === 'function') {
+					console.log("🎨 [File Input] تطبيق تفضيلات الأعمدة...");
+					applySavedColumnPreferences();
+				}
+			}, 400);
             
             // ===== 🆕 رفع الملف إلى GitHub بعد انتهاء المعالجة =====
             setTimeout(async function() {
@@ -3752,7 +3760,6 @@ setTimeout(() => {
 
 
 // ===== تطبيق تفضيلات الأعمدة المحفوظة تلقائياً عند تحميل الصفحة =====
-// ========== تطبيق تفضيلات الأعمدة المحفوظة على جميع التبويبات ==========
 function applySavedColumnPreferences() {
     // التبويب 1
     if (selectedColumns.tab1 && selectedColumns.tab1.length > 0 && currentData1.length > 0) {
@@ -3788,7 +3795,7 @@ function applySavedColumnPreferences() {
         renderTable4("bodyTab4", currentData4, "searchTab4", "typeTab4", "statsTab4");
     }
     
-    // ←←← التبويب 5 ←←←
+    // التبويب 5
     if (selectedColumns.tab5 && selectedColumns.tab5.length > 0 && currentData5.length > 0) {
         if (typeof renderTable5WithSelectedColumns === 'function') {
             renderTable5WithSelectedColumns("bodyTab5", currentData5, "searchTab5", "typeTab5", "statsTab5");
@@ -3797,12 +3804,32 @@ function applySavedColumnPreferences() {
         renderTable5("bodyTab5", currentData5, "searchTab5", "typeTab5", "statsTab5");
     }
 	
-	// التبويب 6
+    // التبويب 6
     if (selectedColumns.tab6 && selectedColumns.tab6.length > 0 && currentData6.length > 0) {
         renderTable6WithSelectedColumns("bodyTab6", currentData6, "searchTab6", "typeTab6", "statsTab6");
     } else if (currentData6.length > 0) {
         renderTable6("bodyTab6", currentData6, "searchTab6", "typeTab6", "statsTab6");
     }
+	
+    // ===== 🆕 التبويب 7 (IMPRT + FORWARD) =====
+    if (selectedColumns.tab7 && selectedColumns.tab7.length > 0 && currentData7.length > 0) {
+        if (typeof renderTable7WithSelectedColumns === 'function') {
+            renderTable7WithSelectedColumns("bodyTab7", currentData7, "searchTab7", "typeTab7", "statsTab7");
+        }
+    } else if (currentData7.length > 0) {
+        if (typeof renderTable7 === 'function') {
+            renderTable7("bodyTab7", currentData7, "searchTab7", "typeTab7", "statsTab7");
+        }
+    }
+	
+    // ===== 🆕 التبويب 8 (Storage Finalout) =====
+    if (currentData8.length > 0) {
+        if (typeof renderTable8 === 'function') {
+            renderTable8("bodyTab8", currentData8, "searchTab8", "typeTab8", "statsTab8");
+        }
+    }
+	
+    console.log('🎨 تم تطبيق تفضيلات الأعمدة على جميع التبويبات');
 }
 
 // استدعاء الدالة بعد تحميل البيانات
