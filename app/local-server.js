@@ -8,15 +8,16 @@ const LOCAL_SERVER_CONFIG = {
         let hosts = [];
         
         // 1️⃣ عنوان الصفحة الحالي (إذا كان التطبيق يعمل من الخادم نفسه)
-        if (window.location.origin && 
-            !window.location.origin.includes('github.io') &&
-            !window.location.origin.includes('localhost')) {
-            hosts.push(window.location.origin);
-        }
+if (window.location.origin && 
+    !window.location.origin.startsWith('file:') &&   // ← سطر جديد
+    !window.location.origin.includes('github.io') &&
+    !window.location.origin.includes('localhost')) {
+    hosts.push(window.location.origin);
+}
         
         // 2️⃣ عناوين احتياطية
         hosts.push(
-            'http://10.5.50.111:3000',
+            'http://10.0.182.128:3000',
             'http://10.63.80.178:3000',
             'http://localhost:3000',
             'http://127.0.0.1:3000'
