@@ -7667,7 +7667,7 @@ function updateHeaderUI(carrierName, maxDate, lineIds) {
         document.title = `📦 تقرير أيام التخزين - ${currentVesselName}`;
         let h1Element = document.querySelector('.header h1');
         if (h1Element) {
-            h1Element.innerHTML = `📦 تقرير أيام التخزين - ${currentVesselName}`;
+            h1Element.innerHTML = `📦 إداره السفينه - ${currentVesselName}`;
         }
         let vesselNameSpan = document.getElementById("vesselNameTitle");
         if (vesselNameSpan) {
