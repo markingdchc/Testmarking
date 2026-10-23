@@ -10971,24 +10971,27 @@ function parseGitHubFileName(fileName) {
     // إزالة الامتداد
     const nameWithoutExt = fileName.replace(/\.(xlsx|xls)$/i, "");
     
-    // ===== محاولة 1: صيغة FINALOUT =====
-    // الصيغة: OrderNumber_LineOp (مثل FINALOUT202602_CMA)
-    // ملاحظة: Order Number يبدأ بـ FINALOUT
-    const finaloutMatch = nameWithoutExt.match(/^(FINALOUT\w+)_([A-Z0-9]+)$/i);
+    // 🆕 التحقق أولاً: هل اسم الملف يحتوي على تاريخ (YYYY-MM-DD)؟
+    const hasDate = /\d{4}-\d{2}-\d{2}/.test(nameWithoutExt);
     
-    if (finaloutMatch) {
+    // ===== محاولة 1: أي ملف بدون تاريخ (يعتبر Order Number / FINALOUT أو غيره) =====
+    if (!hasDate) {
+        const parts = nameWithoutExt.split("_");
+        let orderNumber = parts[0] || nameWithoutExt;
+        let lineOp = parts[1] || ""; // إذا كان هناك جزء ثانٍ يعتبره خط
+        
         return {
-            shipName: finaloutMatch[1],  // Order Number
-            line: finaloutMatch[2],      // Line Op
+            shipName: orderNumber,
+            line: lineOp,
             date: "",                    // لا يوجد تاريخ
-            orderNumber: finaloutMatch[1],
-            lineOp: finaloutMatch[2],
-            isFinalout: true,
+            orderNumber: orderNumber,
+            lineOp: lineOp,
+            isFinalout: true,            // نستخدم هذا المتغير ليعني "بدون تاريخ"
             fullFileName: fileName
         };
     }
     
-    // ===== محاولة 2: صيغة الملف العادي =====
+    // ===== محاولة 2: صيغة الملف العادي (يحتوي على تاريخ) =====
     // الصيغة: ShipName_Line_YYYY-MM-DD
     const normalMatch = nameWithoutExt.match(/^(.+?)_([A-Z0-9]+)_(\d{4}-\d{2}-\d{2})$/);
     
@@ -11004,7 +11007,7 @@ function parseGitHubFileName(fileName) {
         };
     }
     
-    // ===== محاولة 3: صيغة موسعة (مع Order Number و Line Op) =====
+    // ===== محاولة 3: صيغة موسعة (مع Order Number و Line Op + تاريخ) =====
     // ShipName_Line_Date_OrderNumber_LineOp
     const extendedMatch = nameWithoutExt.match(/^(.+?)_([A-Z0-9]+)_(\d{4}-\d{2}-\d{2})_(.+)$/);
     

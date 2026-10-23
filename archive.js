@@ -10,7 +10,7 @@ const ALLOWED_EXTENSIONS = ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.jpg', '.
 // 🆕 بناء اسم مجلد الأرشيف
 // ============================================================
 // ============================================================
-// 🆕 بناء اسم مجلد الأرشيف (ShipName_Date فقط)
+// 🆕 بناء اسم مجلد الأرشيف
 // ============================================================
 function buildArchiveFolderName() {
     let carrierName = "UnknownShip";
@@ -19,6 +19,7 @@ function buildArchiveFolderName() {
     let orderNumber = "";
     let lineOp = "";
 
+    // قراءة البيانات من المتغير العام أو من عناصر HTML
     if (typeof headerDataForUpload !== 'undefined' && headerDataForUpload) {
         carrierName = headerDataForUpload.carrierName || "UnknownShip";
         lineId = headerDataForUpload.lineId || "UnknownLine";
@@ -42,20 +43,21 @@ function buildArchiveFolderName() {
     let safeOrder = clean(orderNumber);
     let safeLineOp = clean(lineOp);
 
-    // 🆕 FINALOUT: مجلد بدون تاريخ، ملف بدون تاريخ (مع خط للتمييز)
+    // 🆕 إذا وجد Order Number (أي اسم وليس FINALOUT فقط): مجلد وملف بدون تاريخ
     if (safeOrder && safeOrder !== "—" && safeOrder !== "") {
         return {
-            folderName: safeOrder,                          // مثال: FINALOUT202602
+            folderName: safeOrder,                          // اسم المجلد = Order Number
             reportBaseName: safeLineOp && safeLineOp !== "—" && safeLineOp !== ""
-                ? `${safeOrder}_${safeLineOp}`              // مثال: FINALOUT202602_CMA
+                ? `${safeOrder}_${safeLineOp}`              // اسم الملف = Order Number_Line
                 : safeOrder,
             shipName: safeOrder,
             lineId: safeLineOp || "UnknownLine",
-            date: "",
-            isFinalout: true
+            date: "",                                       // بدون تاريخ
+            isFinalout: true                                // نستخدم هذا المتغير ليعني "بدون تاريخ"
         };
     }
 
+    // ===== الملفات العادية (التي لا تحتوي على Order Number) =====
     let safeCarrier = clean(carrierName) || "UnknownShip";
     let safeLine = clean(lineId) || "UnknownLine";
     let safeDate = (shippingDate || "").replace(/\//g, "-").replace(/[^\d\-]/g, "");
@@ -1619,33 +1621,43 @@ async function uploadBase64ToArchive(folderName, fileName, base64Data) {
 // ============================================================
 // 🔔 فحص وجود أرشيف للسفينة
 // ============================================================
+// ============================================================
+// 🔔 فحص وجود أرشيف للسفينة أو لرقم الأمر (Order Number)
+// ============================================================
 async function checkShipArchive(shipName, shipDate) {
     if (!shipName || shipName.trim() === "") {
         hideArchiveNotification();
         return;
     }
 
-    // 🆕 FINALOUT: نسمح بدون تاريخ
-    let isFinalout = shipName.toUpperCase().startsWith("FINALOUT");
+    // 🆕 التحقق: هل اسم السفينة/المجلد يحتوي على تاريخ (YYYY-MM-DD)؟
+    let hasDate = /\d{4}-\d{2}-\d{2}/.test(shipName);
+    let isOrderNumberFile = !hasDate; // إذا لم يكن به تاريخ، فهو ملف Order Number
 
-    if (!isFinalout && (!shipDate || shipDate.trim() === "")) {
+    // إذا كان ملف عادي (سفينة) وليس هناك تاريخ محدد، لا تظهر الإشعار
+    if (!isOrderNumberFile && (!shipDate || shipDate.trim() === "")) {
         hideArchiveNotification();
         return;
     }
 
     try {
+        // تحميل قائمة المجلدات من (المحلي + GitHub)
         let folders = await loadArchiveFolders();
+        
         let cleanShip = shipName.toLowerCase().replace(/\s+/g, '_');
         let cleanDate = (shipDate || "").replace(/\//g, '-').trim();
 
+        // فلترة المجلدات المطابقة
         let matches = folders.filter(f => {
             let shipMatch = f.name.toLowerCase().includes(cleanShip);
+            // إذا لم يوجد تاريخ، لا نفلتر بالتاريخ (نقبل أي مجلد يطابق اسم السفينة/الأمر)
             let dateMatch = !cleanDate || f.name.includes(cleanDate);
             return shipMatch && dateMatch;
         });
 
         console.log(`🔍 فلترة ${shipName}${cleanDate ? ' + ' + cleanDate : ''}: ${matches.length} مجلد`);
 
+        // إظهار أو إخفاء الإشعار
         if (matches.length > 0) {
             showArchiveNotification(shipName, shipDate, matches);
         } else {
