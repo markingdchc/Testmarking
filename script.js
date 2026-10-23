@@ -356,12 +356,26 @@ if (!fieldCheck.valid) {
 }
 console.log("✅ فحص جميع الحقول نجح، بدء المعالجة...");
 
-            if (isFinalout) {
-                console.log("📂 تم التعرف على ملف FINALOUT (تبويب 8)");
-                processFinaloutFile(rows);
-                document.getElementById("footerMsg").innerHTML = `✅ تم تحميل ملف FINALOUT: ${file.name} | عدد الحاويات: ${currentData8.length}`;
-                return;
-            }
+			if (isFinalout) {
+				console.log("📂 تم التعرف على ملف FINALOUT (تبويب 8)");
+				processFinaloutFile(rows);
+				document.getElementById("footerMsg").innerHTML =
+					`✅ تم تحميل ملف FINALOUT: ${file.name} | عدد الحاويات: ${currentData8.length}`;
+
+				// 🆕 رفع إلى GitHub + إنشاء الأرشيف تلقائياً
+				setTimeout(async function() {
+					if (typeof _downloadingFromGitHub !== 'undefined' && _downloadingFromGitHub) {
+						console.log("⏭️ تم تخطي الرفع (الملف قادم من GitHub)");
+						return;
+					}
+					let result = await saveFileToGitHub();
+					if (result && result.success) {
+						console.log("✅ [FINALOUT] تم الرفع + إنشاء الأرشيف");
+					}
+				}, 1500);
+
+				return;
+			}
 
             // ===== معالجة الملف العادي =====
             console.log("📂 تم التعرف على ملف البيانات الرئيسي (تبويبات 1-7)");
@@ -566,12 +580,22 @@ function processExcelFromBytes(bytes, fileName) {
         console.log("✅ فحص جميع الحقول نجح، بدء المعالجة...");
         
         // ===== معالجة FINALOUT =====
-        if (isFinalout) {
-            console.log("📂 تم التعرف على ملف FINALOUT (تبويب 8)");
-            processFinaloutFile(rows);
-            document.getElementById("footerMsg").innerHTML = `✅ تم تحميل ملف FINALOUT: ${fileName} | عدد الحاويات: ${currentData8.length}`;
-            return;
-        }
+		if (isFinalout) {
+			console.log("📂 تم التعرف على ملف FINALOUT (تبويب 8)");
+			processFinaloutFile(rows);
+			document.getElementById("footerMsg").innerHTML =
+				`✅ تم تحميل ملف FINALOUT: ${fileName} | عدد الحاويات: ${currentData8.length}`;
+
+			setTimeout(async function() {
+				if (typeof _downloadingFromGitHub !== 'undefined' && _downloadingFromGitHub) {
+					console.log("⏭️ تم تخطي الرفع (الملف قادم من GitHub)");
+					return;
+				}
+				await saveFileToGitHub();
+			}, 1500);
+
+			return;
+		}
         
         // ===== معالجة الملف العادي =====
         console.log("📂 تم التعرف على ملف البيانات الرئيسي (تبويبات 1-7)");
@@ -11111,8 +11135,9 @@ function updateDateDropdown() {
             return (b.date || "").localeCompare(a.date || "");
         });
     
-    // ✅ ✅ ✅ الجزء المُضاف ✅ ✅ ✅
     const seen = new Set();
+    let addedCount = 0;
+
     matchingFiles.forEach(f => {
         let key = (f.date || "") + "|" + (f.orderNumber || "") + "|" + (f.lineOp || "");
         if (seen.has(key)) return;
@@ -11123,7 +11148,7 @@ function updateDateDropdown() {
         
         let displayText = "";
         if (f.isFinalout) {
-            displayText = "📋 " + f.orderNumber + " | 🚢 " + f.lineOp;
+            displayText = "📋 " + (f.orderNumber || f.shipName) + " | 🚢 " + (f.lineOp || f.line);
         } else {
             displayText = "📅 " + f.date;
             if (f.orderNumber) displayText += " | 📋 " + f.orderNumber;
@@ -11138,8 +11163,14 @@ function updateDateDropdown() {
         opt.dataset.fullFileName = f.fullFileName;
         
         dateSelect.appendChild(opt);
+        addedCount++;
     });
-}  // ← ← ← قوس إغلاق الدالة (كان مفقوداً!)
+
+    // 🆕 اختيار تلقائي للملف إذا كان هناك ملف واحد فقط
+    if (addedCount === 1) {
+        dateSelect.selectedIndex = 1;
+    }
+}
 
 // ============================================================
 // 📥 تحميل الملف المختار من GitHub

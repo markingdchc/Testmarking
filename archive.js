@@ -16,15 +16,21 @@ function buildArchiveFolderName() {
     let carrierName = "UnknownShip";
     let lineId = "UnknownLine";
     let shippingDate = "";
+    let orderNumber = "";
+    let lineOp = "";
 
     if (typeof headerDataForUpload !== 'undefined' && headerDataForUpload) {
         carrierName = headerDataForUpload.carrierName || "UnknownShip";
         lineId = headerDataForUpload.lineId || "UnknownLine";
         shippingDate = headerDataForUpload.shippingDate || "";
+        orderNumber = headerDataForUpload.orderNumber || "";
+        lineOp = headerDataForUpload.lineOp || "";
     } else {
         carrierName = document.getElementById("headerCarrierName")?.innerText?.trim() || "UnknownShip";
         lineId = document.getElementById("headerLineId")?.innerText?.trim() || "UnknownLine";
         shippingDate = document.getElementById("headerShippingDate")?.innerText?.trim() || "";
+        orderNumber = document.getElementById("headerOrderNumber")?.innerText?.trim() || "";
+        lineOp = document.getElementById("headerLineOp")?.innerText?.trim() || "";
     }
 
     const clean = (str) => (str || "")
@@ -32,6 +38,23 @@ function buildArchiveFolderName() {
         .replace(/\s+/g, '_')
         .replace(/[^\w\u0600-\u06FF\-]/g, "")
         .substring(0, 50);
+
+    let safeOrder = clean(orderNumber);
+    let safeLineOp = clean(lineOp);
+
+    // 🆕 FINALOUT: مجلد بدون تاريخ، ملف بدون تاريخ (مع خط للتمييز)
+    if (safeOrder && safeOrder !== "—" && safeOrder !== "") {
+        return {
+            folderName: safeOrder,                          // مثال: FINALOUT202602
+            reportBaseName: safeLineOp && safeLineOp !== "—" && safeLineOp !== ""
+                ? `${safeOrder}_${safeLineOp}`              // مثال: FINALOUT202602_CMA
+                : safeOrder,
+            shipName: safeOrder,
+            lineId: safeLineOp || "UnknownLine",
+            date: "",
+            isFinalout: true
+        };
+    }
 
     let safeCarrier = clean(carrierName) || "UnknownShip";
     let safeLine = clean(lineId) || "UnknownLine";
@@ -44,14 +67,13 @@ function buildArchiveFolderName() {
                    String(today.getDate()).padStart(2, '0');
     }
 
-    // 🆕 المجلد = ShipName_Date (بدون خط)
-    // 🆕 الملف = ShipName_Line_Date (مع خط)
     return {
         folderName: `${safeCarrier}_${safeDate}`,
         reportBaseName: `${safeCarrier}_${safeLine}_${safeDate}`,
         shipName: safeCarrier,
         lineId: safeLine,
-        date: safeDate
+        date: safeDate,
+        isFinalout: false
     };
 }
 
@@ -69,11 +91,14 @@ async function autoArchiveContainerFile() {
         return { success: false, error: "no file" };
     }
 
-    let names = buildArchiveFolderName();
-    if (names.shipName.includes("UnknownShip") || names.lineId.includes("UnknownLine")) {
-        console.warn("⚠️ [الأرشيف] اسم السفينة أو الخط غير معروف");
-        return { success: false, error: "unknown ship" };
-    }
+let names = buildArchiveFolderName();
+
+// 🆕 السماح بـ FINALOUT حتى لو لم يُحدد الخط
+if (!names.isFinalout &&
+    (names.shipName.includes("UnknownShip") || names.lineId.includes("UnknownLine"))) {
+    console.warn("⚠️ [الأرشيف] اسم السفينة أو الخط غير معروف");
+    return { success: false, error: "unknown ship" };
+}
 
     const folderName = names.folderName;
     const extension = originalFileName.split('.').pop() || 'xls';
@@ -269,6 +294,7 @@ async function openArchiveWindow() {
     
     let filterShip = "";
     let filterDate = "";
+    let isFinaloutFile = false;
     
     // 🔍 اقرأ السفينة المحددة
     let shipSelect = document.getElementById('ghShipSelect');
@@ -277,18 +303,23 @@ async function openArchiveWindow() {
         console.log("🔍 السفينة:", filterShip);
     }
     
-    // 🔍 اقرأ التاريخ المحدد
+    // 🔍 اقرأ التاريخ المحدد + نوع الملف
     let dateSelect = document.getElementById('ghDateSelect');
     if (dateSelect && dateSelect.value) {
         let selectedOption = dateSelect.options[dateSelect.selectedIndex];
-        if (selectedOption && selectedOption.dataset && selectedOption.dataset.date) {
-            filterDate = selectedOption.dataset.date;
+        if (selectedOption && selectedOption.dataset) {
+            if (selectedOption.dataset.date) {
+                filterDate = selectedOption.dataset.date;
+            }
+            if (selectedOption.dataset.isFinalout === "true") {
+                isFinaloutFile = true;
+            }
         }
-        console.log("🔍 التاريخ:", filterDate);
+        console.log("🔍 التاريخ:", filterDate, "| FINALOUT:", isFinaloutFile);
     }
     
-    // 🆕 التحقق: إذا كانت السفينة محددة، يجب تحديد التاريخ أيضاً
-    if (filterShip && !filterDate) {
+    // 🆕 إذا كانت السفينة محددة، يجب تحديد التاريخ — إلا إذا كان الملف FINALOUT
+    if (filterShip && !filterDate && !isFinaloutFile) {
         alert('⚠️ يرجى اختيار التاريخ أيضاً\n\nلكي يعرض الأرشيف رحلة محددة، اختر التاريخ من القائمة.');
         return;
     }
@@ -297,7 +328,7 @@ async function openArchiveWindow() {
     // إذا أردت اشتراط تحديد السفينة أيضاً، فعّل السطر التالي:
     // if (!filterShip) { alert('⚠️ يرجى اختيار السفينة أولاً'); return; }
     
-    // افتح الأرشيف مع الفلتر (اسم السفينة + التاريخ)
+    // افتح الأرشيف مع الفلتر (اسم السفينة + التاريخ أو بدونهما لـ FINALOUT)
     await openArchiveInternal(filterShip, filterDate);
 }
 
@@ -1589,25 +1620,32 @@ async function uploadBase64ToArchive(folderName, fileName, base64Data) {
 // 🔔 فحص وجود أرشيف للسفينة
 // ============================================================
 async function checkShipArchive(shipName, shipDate) {
-    // 🆕 لا تنبيه إلا إذا كانت السفينة **و** التاريخ محددين
-    if (!shipName || shipName.trim() === "" || !shipDate || shipDate.trim() === "") {
+    if (!shipName || shipName.trim() === "") {
         hideArchiveNotification();
         return;
     }
-    
+
+    // 🆕 FINALOUT: نسمح بدون تاريخ
+    let isFinalout = shipName.toUpperCase().startsWith("FINALOUT");
+
+    if (!isFinalout && (!shipDate || shipDate.trim() === "")) {
+        hideArchiveNotification();
+        return;
+    }
+
     try {
         let folders = await loadArchiveFolders();
         let cleanShip = shipName.toLowerCase().replace(/\s+/g, '_');
-        let cleanDate = shipDate.replace(/\//g, '-').trim();
-        
-        // فلترة بالسفينة والتاريخ معاً
-        let matches = folders.filter(f => 
-            f.name.toLowerCase().includes(cleanShip) && 
-            f.name.includes(cleanDate)
-        );
-        
-        console.log(`🔍 فلترة ${shipName} + ${cleanDate}: ${matches.length} مجلد`);
-        
+        let cleanDate = (shipDate || "").replace(/\//g, '-').trim();
+
+        let matches = folders.filter(f => {
+            let shipMatch = f.name.toLowerCase().includes(cleanShip);
+            let dateMatch = !cleanDate || f.name.includes(cleanDate);
+            return shipMatch && dateMatch;
+        });
+
+        console.log(`🔍 فلترة ${shipName}${cleanDate ? ' + ' + cleanDate : ''}: ${matches.length} مجلد`);
+
         if (matches.length > 0) {
             showArchiveNotification(shipName, shipDate, matches);
         } else {
