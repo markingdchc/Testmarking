@@ -1,38 +1,91 @@
 // ============================================================
 // 🖥️ خادم الأرشيف المحلي (LAN)
 // ============================================================
-// يستمع على المنفذ 3000، ويعمل كجسر بين المتصفح و NAS
-// ============================================================
 
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs').promises;
 const path = require('path');
+const { execSync } = require('child_process');
 
 // ============================================================
-// ⚙️ الإعدادات — عدّلها حسب بيئتك
+// ⚙️ الإعدادات
 // ============================================================
 const CONFIG = {
     PORT: 3000,
-    // مسار مجلد الأرشيف على NAS
-    ARCHIVE_PATH: '\\\\192.168.1.10\\Archive',
-    // المسارات الممنوعة لأسباب أمنية
-    MAX_FILE_SIZE: 50 * 1024 * 1024,  // 50 MB
+    ARCHIVE_PATH: '\\\\10.0.182.128\\database\\archive',
+    MAX_FILE_SIZE: 50 * 1024 * 1024,
     ALLOWED_EXTENSIONS: ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.jpg', '.jpeg', '.png'],
-    // كلمة مرور بسيطة (اختيارية)
-    API_KEY: 'your-secret-key-change-me'
+    API_KEY: 'your-secret-key-change-me',
+    NAS_USER: '',
+    NAS_PASSWORD: ''
 };
+
+// ============================================================
+// 🔗 ربط مشاركة الشبكة تلقائياً
+// ============================================================
+function connectToNAS() {
+    try {
+        console.log('🔗 جاري ربط مشاركة الشبكة...');
+        
+        try {
+            execSync(`net use "${CONFIG.ARCHIVE_PATH}" /delete /y`, { stdio: 'ignore' });
+        } catch (e) { /* لا مشكلة إن لم يوجد ربط قديم */ }
+        
+        let cmd;
+        if (CONFIG.NAS_USER && CONFIG.NAS_PASSWORD) {
+            cmd = `net use "${CONFIG.ARCHIVE_PATH}" /user:"${CONFIG.NAS_USER}" "${CONFIG.NAS_PASSWORD}" /persistent:yes`;
+        } else {
+            cmd = `net use "${CONFIG.ARCHIVE_PATH}" /persistent:yes`;
+        }
+        
+        try {
+            execSync(cmd, { stdio: 'pipe' });
+            console.log('✅ تم ربط مشاركة الشبكة بنجاح');
+        } catch (e) {
+            console.log('ℹ️ المشاركة متصلة مسبقاً أو لا تحتاج بيانات دخول');
+        }
+        
+        try {
+            execSync(`dir "${CONFIG.ARCHIVE_PATH}"`, { stdio: 'pipe' });
+            console.log('✅ اختبار الوصول ناجح');
+            return true;
+        } catch (e) {
+            console.log('❌ لا يمكن الوصول للمجلد');
+            return false;
+        }
+        
+    } catch (error) {
+        console.log('⚠️ خطأ:', error.message);
+        return false;
+    }
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '60mb' }));
 
 // ============================================================
-// 🔐 Middleware للتحقق من API Key (اختياري)
+// 🆕 خدمة ملفات التطبيق (مرة واحدة فقط)
+// ============================================================
+app.use(express.static('\\\\10.0.182.128\\database\\app'));
+
+// 🆕 إنشاء مجلد الأرشيف تلقائياً
+(async () => {
+    try {
+        await fs.mkdir(CONFIG.ARCHIVE_PATH, { recursive: true });
+        console.log('✅ مجلد الأرشيف جاهز:', CONFIG.ARCHIVE_PATH);
+    } catch (e) {
+        console.log('⚠️ تعذّر إنشاء مجلد الأرشيف:', e.message);
+    }
+})();
+
+// ============================================================
+// 🔐 Middleware للتحقق من API Key
 // ============================================================
 app.use((req, res, next) => {
-    // اسمح بطلب فحص الحالة بدون مفتاح
     if (req.path === '/api/ping') return next();
+    if (req.path === '/api/check-access') return next();
     
     const apiKey = req.headers['x-api-key'] || req.query.apiKey;
     if (CONFIG.API_KEY && apiKey !== CONFIG.API_KEY) {
@@ -115,9 +168,7 @@ app.get('/api/archive/list', async (req, res) => {
             });
         }
         
-        // ترتيب تنازلي حسب الاسم (الأحدث أولاً)
         folders.sort((a, b) => b.name.localeCompare(a.name));
-        
         res.json({ success: true, folders });
         
     } catch (error) {
@@ -133,7 +184,6 @@ app.get('/api/archive/file/:folder/:file', async (req, res) => {
         const folderName = decodeURIComponent(req.params.folder);
         const fileName = decodeURIComponent(req.params.file);
         
-        // حماية من path traversal
         if (folderName.includes('..') || fileName.includes('..')) {
             return res.status(400).json({ error: 'مسار غير صالح' });
         }
@@ -154,7 +204,7 @@ app.get('/api/archive/file/:folder/:file', async (req, res) => {
 });
 
 // ============================================================
-// 📤 رفع ملف جديد (أو تحديث)
+// 📤 رفع ملف جديد
 // ============================================================
 app.post('/api/archive/upload', async (req, res) => {
     try {
@@ -164,29 +214,24 @@ app.post('/api/archive/upload', async (req, res) => {
             return res.status(400).json({ error: 'بيانات ناقصة' });
         }
         
-        // التحقق من الامتداد
         const ext = '.' + fileName.toLowerCase().split('.').pop();
         if (!CONFIG.ALLOWED_EXTENSIONS.includes(ext)) {
             return res.status(400).json({ error: 'نوع الملف غير مسموح: ' + ext });
         }
         
-        // التحقق من الحجم
         const size = Buffer.from(base64Data, 'base64').length;
         if (size > CONFIG.MAX_FILE_SIZE) {
             return res.status(400).json({ error: 'الملف كبير جداً (الأقصى 50 MB)' });
         }
         
-        // تنظيف الأسماء
         const safeFolder = sanitizeName(folderName);
         const safeFile = sanitizeName(fileName);
         
         const folderPath = path.join(CONFIG.ARCHIVE_PATH, safeFolder);
         const filePath = path.join(folderPath, safeFile);
         
-        // إنشاء المجلد إذا لم يكن موجوداً
         await fs.mkdir(folderPath, { recursive: true });
         
-        // كتابة الملف
         const buffer = Buffer.from(base64Data, 'base64');
         await fs.writeFile(filePath, buffer);
         
@@ -252,6 +297,11 @@ function getMimeType(fileName) {
 }
 
 // ============================================================
+// 🔗 ربط NAS قبل بدء الخادم
+// ============================================================
+connectToNAS();
+
+// ============================================================
 // 🚀 تشغيل الخادم
 // ============================================================
 app.listen(CONFIG.PORT, '0.0.0.0', () => {
@@ -265,7 +315,6 @@ app.listen(CONFIG.PORT, '0.0.0.0', () => {
     console.log('');
     console.log('  🌐 روابط الوصول:');
     
-    // اطبع عناوين IP المحلية
     const os = require('os');
     const interfaces = os.networkInterfaces();
     for (let name in interfaces) {

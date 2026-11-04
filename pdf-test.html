@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>اختبار PDF النصي</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="pdf-font.js"></script><script src="pdf-text.js"></script>
+<style>body{font-family:Segoe UI,Tahoma,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.8}
+button{background:#0a3d62;color:#fff;border:0;border-radius:10px;padding:12px 26px;font-size:16px;font-weight:bold;cursor:pointer}
+#log{margin-top:16px;padding:12px;border-radius:10px;background:#f1f5f9;white-space:pre-wrap;font-size:14px}</style></head><body>
+<h2>🧪 اختبار PDF النصي ببيانات تجريبية</h2>
+<p>يتحقق من أن الخط العربي وتشكيل الحروف والجداول والألوان وبطاقات الإجمالي تعمل في متصفحك، دون الحاجة لفتح البرنامج.</p>
+<button onclick="run()">📄 إنشاء PDF تجريبي وتنزيله</button><div id="log">جاهز.</div>
+<script>
+const log=m=>document.getElementById('log').textContent=m;
+const C=(t,bg,bold,color)=>({text:t,bg:bg||null,bold:!!bold,color:color||null});
+const card=(bg,lines)=>({bg,lines:lines.map(l=>({text:l[0],px:l[1]||12,bold:!!l[2],color:l[3]||null,bg:l[4]||null}))});
+async function run(){
+  try{
+    if(!window.PdfText) throw new Error('PdfText غير معرّف: تأكد أن pdf-text.js وpdf-font.js بجانب هذه الصفحة ثم Ctrl+F5');
+    const heads=['رقم الحاوية','Size','TRSHP بعد الخصم','TRSHP Net','طريقة الحساب','EXPRT Days','خطر','Total Net','Vessel Name'];
+    const rows=[];
+    for(let i=0;i<60;i++) rows.push([C('ZIMU'+(1000000+i*137)),C('22'),C(String(40+i%9)),C(String(i%12),[212,237,218],true),
+      C(i%2?'بعد الخصم':'طريقة مباشرة'),C(String(3+i%6),[227,242,253]),C(i%5?'—':'❌',null,false,i%5?null:[220,53,69]),C(String(i%12+3)),C('MARLA TIGER')]);
+    const stats=[card([102,126,234],[['إجمالي الحاويات',11,false,[255,255,255]],['60',22,true,[255,255,255]]]),
+                 card([40,167,69],[['TRSHP أيام',11,false,[255,255,255]],['1,240',22,true,[255,255,255]],['MSC JADE',10,false,[255,255,255]]]),
+                 card([255,193,7],[['EXPRT صافي',11,true,[60,60,60]],['318',22,true,[60,60,60]]])];
+    const tab={id:'tab1',title:'TRSHP + EXPRT',heads,rows,stats,extra:null};
+    const t0=performance.now();
+    const doc=await PdfText.buildDocument([tab,Object.assign({},tab,{id:'tab8',title:'Storage Finalout',extra:{orderNumber:'A-1025',lineOp:'MSC',count:'60'}})],{carrier:'MSC JADE',shipDate:'2026-10-24',lineId:'MSC'});
+    const kb=Math.round(doc.output('arraybuffer').byteLength/1024);
+    doc.save('اختبار-pdf-نصي.pdf');
+    log('✅ تم الإنشاء في '+Math.round(performance.now()-t0)+' مللي ثانية\nالحجم: '+kb+' KB — '+doc.getNumberOfPages()+' صفحة\nافتح الملف وتأكد من: العربية متصلة وبالاتجاه الصحيح، أسماء السفن الإنجليزية بترتيبها، الألوان، البطاقات، التوقيعات.');
+  }catch(e){log('❌ فشل: '+e.message+'\n(هذا هو السبب الذي سيجعل البرنامج يعود للطريقة الصورية)');console.error(e)}
+}
+</script></body></html>

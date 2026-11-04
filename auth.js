@@ -264,6 +264,7 @@ function applyPermissions() {
         '#manageUsersBtn',                      // إدارة المستخدمين
 		'#archiveBtn',
 		'#setTokenBtn',                         // زر التوكن
+		'#createArchiveBtn',                    // 🆕 إخفاء زر إنشاء مجلد أرشيف
         '.settings-btn'                         // أزرار الإعدادات
     ];
     

@@ -7,6 +7,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background: #f0f2f5; margin: 0; padding: 20px; }
@@ -206,7 +209,7 @@
 <div class="container" id="appContainer" style="display:none;">
     <div class="header">
 	    <div id="userBar"></div>
-        <h1>📦 تقرير أيام التخزين</h1>
+        <h1>📦 إداره السفينه</h1>
         <div id="headerInfo" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 13px; display: flex; justify-content: space-between; flex-wrap: wrap;">
             <div>🚢 <strong>سفينه الشحن (O/B Carrier Name):</strong> <span id="headerCarrierName">—</span></div>
             <div>📅 <strong>تاريخ الشحن (O/B Carrier ATD):</strong> <span id="headerShippingDate">—</span></div>
@@ -252,7 +255,10 @@
     <label for="fileInput" class="file-label" style="margin: 0;">📂 تحميل ملف</label>
     <button id="exportAllBtn" class="export-all-btn" style="margin: 0;">📥 تصدير جميع التبويبات</button>
     <button id="setTokenBtn" style="background:#6c757d;color:white;padding:12px 28px;border-radius:40px;cursor:pointer;font-weight:bold;font-size:16px;border:none;display:none;">🔑 إعداد GitHub Token</button>
-     <!--<button id="manageUsersBtn" style="background:#8b5cf6;color:white;padding:12px 28px;border-radius:40px;cursor:pointer;font-weight:bold;font-size:16px;border:none;">👥 إدارة المستخدمين</button>-->
+    
+    <!-- 🆕 زر إنشاء مجلد أرشيف -->
+    <button id="createArchiveBtn" style="background: #10b981; color: white; padding: 12px 28px; border-radius: 40px; cursor: pointer; font-weight: bold; font-size: 16px; border: none;">➕ إنشاء مجلد أرشيف</button>
+
     <button id="interactiveReportBtn" style="background: #e67e22; color: white; padding: 12px 28px; border-radius: 40px; cursor: pointer; font-weight: bold; font-size: 16px; border: none;">📊 تقرير مجمع تفاعلي</button>
 </div>
 
@@ -905,9 +911,55 @@
     </div>
 </div>
 
+<!-- 🆕 نافذة إنشاء مجلد أرشيف -->
+<div id="createArchiveModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 99999; justify-content: center; align-items: center; padding: 20px; backdrop-filter: blur(4px);">
+    <div style="background: white; border-radius: 16px; width: 100%; max-width: 450px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.2);">
+        <div style="background: #0a3d62; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; font-size: 18px;">➕ إنشاء مجلد أرشيف جديد</h3>
+            <button onclick="document.getElementById('createArchiveModal').style.display='none'" style="background: none; border: none; color: white; font-size: 24px; cursor: pointer;">&times;</button>
+        </div>
+        <div style="padding: 20px;">
+            <div style="margin-bottom: 15px;">
+                <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">🚢 اسم السفينة:</label>
+                
+                <!-- القائمة المنسدلة الحقيقية -->
+                <select id="newArchiveShipSelect" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; margin-bottom: 5px;">
+                    <option value="">-- اختر سفينة --</option>
+                    <option value="NEW">➕ إضافة سفينة جديدة...</option>
+                </select>
+                
+                <!-- حقل نصي يظهر فقط عند اختيار إضافة سفينة جديدة -->
+                <input type="text" id="newArchiveShipInput" placeholder="اكتب اسم السفينة الجديدة هنا..." style="display: none; width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px;">
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">🏷️ الخطوط الملاحية:</label>
+                <div id="linesContainer" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px;">
+                    <div class="line-input-group" style="display: flex; gap: 5px;">
+                        <input type="text" class="newArchiveLineInput" placeholder="مثال: YML" style="flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px;">
+                    </div>
+                </div>
+                <button type="button" id="addLineBtn" style="background: #e2e8f0; color: #333; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold;">➕ إضافة خط آخر</button>
+            </div>
+            
+            <div style="margin-bottom: 25px;">
+                <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">📅 تاريخ الرحلة:</label>
+                <input type="date" id="newArchiveDate" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px;">
+            </div>
+            
+            <button id="submitCreateArchive" style="width: 100%; background: #10b981; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer;">إنشاء المجلد</button>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="dashboard.css?v=4.3">
 <script src="auth.js"></script>
 <script src="local-server.js"></script>
 <script src="archive.js"></script>
 <script src="script.js"></script>
+<script src="pdf-font.js?v=5.1"></script>
+<script src="pdf-text.js?v=5.1"></script>
+<script src="scanner.js?v=2.1"></script>
+<script src="dashboard.js?v=4.3"></script>
 </body>
 </html>

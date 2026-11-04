@@ -13,7 +13,7 @@
     "trshpPeriodsTab1": [
         {"id": 1, "category": "TRSHP", "lineId": "MSC", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2025-12-01", "endDate": "", "freeDays": 19},
         {"id": 2, "category": "TRSHP", "lineId": "ZIM", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 20},
-        {"id": 3, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 25},
+        {"id": 3, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "2026-08-26", "freeDays": 25},
         {"id": 4, "category": "TRSHP", "lineId": "YML", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 20},
         {"id": 5, "category": "TRSHP", "lineId": "MSK", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 20},
         {"id": 6, "category": "TRSHP", "lineId": "CMA", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 21},
@@ -75,7 +75,8 @@
         {"id": 62, "category": "TRSHP", "lineId": "SFT", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15},
         {"id": 63, "category": "TRSHP", "lineId": "ROD", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15},
         {"id": 64, "category": "TRSHP", "lineId": "MAXI", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15},
-        {"id": 65, "category": "TRSHP", "lineId": "EMK", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15}
+        {"id": 65, "category": "TRSHP", "lineId": "EMK", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15},
+        {"id": 66, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "isHazardous": "", "startDate": "2026-08-27", "endDate": "", "freeDays": 15}
     ],
 
     "exprtPeriodsTab1": [
@@ -247,7 +248,7 @@
     "trshpOnlyPeriodsTab5": [
         {"id": 1, "category": "TRSHP", "lineId": "MSC", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2025-12-01", "endDate": "2026-02-28", "freeDays": 23},
         {"id": 2, "category": "TRSHP", "lineId": "ZIM", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 20},
-        {"id": 3, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "freightKind": "MTY", "startDate": "2026-01-01", "endDate": "", "freeDays": 25},
+        {"id": 3, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "freightKind": "MTY", "startDate": "2026-01-01", "endDate": "2026-08-26", "freeDays": 24},
         {"id": 4, "category": "TRSHP", "lineId": "YML", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 20},
         {"id": 5, "category": "TRSHP", "lineId": "MSK", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 20},
         {"id": 6, "category": "TRSHP", "lineId": "CMA", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 21},
@@ -312,8 +313,10 @@
         {"id": 65, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "freightKind": "FCL", "startDate": "2026-01-01", "endDate": "", "freeDays": 24},
         {"id": 66, "category": "TRSHP", "lineId": "MAXI", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15},
         {"id": 67, "category": "TRSHP", "lineId": "SLS", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-07-01", "endDate": "", "freeDays": 15},
-        {"id": 68, "category": "TRSHP", "lineId": "SLS", "drayStatus": "", "flexString01": "", "freightKind": "MTY", "startDate": "2025-07-01", "endDate": "2026-06-30", "freeDays": 25},
-        {"id": 69, "category": "TRSHP", "lineId": "EMK", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15}
+        {"id": 68, "category": "TRSHP", "lineId": "SLS", "drayStatus": "", "flexString01": "", "freightKind": "MTY", "startDate": "2025-07-01", "endDate": "", "freeDays": 15},
+        {"id": 69, "category": "TRSHP", "lineId": "EMK", "drayStatus": "", "flexString01": "", "freightKind": "", "startDate": "2026-01-01", "endDate": "", "freeDays": 15},
+        {"id": 70, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "freightKind": "MTY", "startDate": "2026-08-27", "endDate": "", "freeDays": 15},
+        {"id": 71, "category": "TRSHP", "lineId": "ALP", "drayStatus": "", "flexString01": "", "freightKind": "FCL", "startDate": "2026-08-27", "endDate": "", "freeDays": 15}
     ],
 
     "excludeLines5": [],
