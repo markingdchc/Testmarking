@@ -40,7 +40,7 @@
         const im = await loadImg(src);
         let w = im.naturalWidth, h = im.naturalHeight; const k = Math.min(1, maxPx / Math.max(w, h)); w = Math.round(w * k); h = Math.round(h * k);
         const rot = (((ops.rot || 0) % 360) + 360) % 360, sw = rot % 180 ? h : w, sh = rot % 180 ? w : h;
-        let c = mkCanvas(sw, sh), x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, sw, sh);
+        let c = mkCanvas(sw, sh), x = c.getContext('2d'); x.fillStyle = ops.fill || '#fff'; x.fillRect(0, 0, sw, sh);
         x.translate(sw / 2, sh / 2); x.rotate(rot * Math.PI / 180 + (ops.angle || 0) * Math.PI / 180);
         const f = []; if (ops.contrast && ops.contrast !== 1) f.push('contrast(' + ops.contrast + ')'); if (ops.brightness && ops.brightness !== 1) f.push('brightness(' + ops.brightness + ')'); if (ops.gray || ops.bw) f.push('grayscale(1)');
         if (f.length) x.filter = f.join(' ');
@@ -88,6 +88,30 @@
         let best = 0, bs = -1; for (let a = -8; a <= 8; a += 0.5) { const v = score(a); if (v > bs) { bs = v; best = a; } }
         const c0 = best; for (let a = c0 - 0.5; a <= c0 + 0.5; a += 0.1) { const v = score(a); if (v > bs) { bs = v; best = a; } }
         return Math.round(best * 10) / 10;
+    }
+    // حذف الحواف الخارجية: يكشف حدود الورقة (الحواف الداكنة/ظل غطاء السكانر/زوايا الميل) ويرجع مستطيل قص نسبي أو null
+    async function estimateCropBox(src, rot, angle) {
+        const r = await processImage(src, { rot: rot || 0, angle: angle || 0, fill: '#000' }, 420, 0.8);
+        const c = await smallGray(r.url, 300), W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data;
+        const g = new Uint8Array(W * H); for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+        const th = Math.max(70, Math.min(190, otsu(g)));
+        const lineOk = (isRow, i, a, b) => { let n = 0; for (let k = a; k <= b; k++) if ((isRow ? g[i * W + k] : g[k * W + i]) > th) n++; return n / (b - a + 1) >= 0.3; };
+        const edge = (isRow, len, a, b, fromEnd) => {
+            for (let t = 0; t < len - 3; t++) { const i = fromEnd ? len - 1 - t : t; let ok = true; for (let q = 0; q < 3 && ok; q++) ok = lineOk(isRow, fromEnd ? i - q : i + q, a, b); if (ok) return i; }
+            return -1;
+        };
+        let y0 = edge(true, H, 0, W - 1, false), y1 = edge(true, H, 0, W - 1, true);
+        if (y0 < 0 || y1 <= y0) return null;
+        let x0 = edge(false, W, y0, y1, false), x1 = edge(false, W, y0, y1, true);
+        if (x0 < 0 || x1 <= x0) return null;
+        y0 = Math.max(y0, edge(true, H, x0, x1, false)); y1 = Math.min(y1, edge(true, H, x0, x1, true));
+        if (y1 <= y0) return null;
+        const ins = 0.006, L = x0 / W, T = y0 / H, R = (W - 1 - x1) / W, B = (H - 1 - y1) / H;
+        if (Math.max(L, T, R, B) < 0.008) return null;      // لا توجد حواف ملحوظة
+        const bx = { x: Math.min(0.4, L + (L > 0.004 ? ins : 0)), y: Math.min(0.4, T + (T > 0.004 ? ins : 0)) };
+        bx.w = 1 - bx.x - Math.min(0.4, R + (R > 0.004 ? ins : 0)); bx.h = 1 - bx.y - Math.min(0.4, B + (B > 0.004 ? ins : 0));
+        if (bx.w * bx.h < 0.55) return null;                // أمان: لا نقص أكثر من اللازم
+        return bx;
     }
     // ISO 6346
     function isoValid(code) {
@@ -163,12 +187,15 @@
             for (const f of files) {
                 const name = f.name || ('scan_' + Date.now()), d = await fileToDataUrl(f);
                 try {
-                    let n = await processImage(d, {}, MAX_PX, JPEG_Q), ops = {}, fixed = 0;
+                    let n = await processImage(d, {}, MAX_PX, JPEG_Q), ops = {}, fixed = 0, edges = false;
                     const blank = await isBlank(n.url);
                     if (!blank && $('#sc-optdeskew').checked) {
                         try { const a = await estimateSkew(n.url); if (Math.abs(a) >= 0.4 && Math.abs(a) <= 7.5) { ops = { angle: a }; n = await processImage(d, ops, MAX_PX, JPEG_Q); fixed = a; } } catch (e) { }
                     }
-                    made.push({ id: ++uid, name, kind: 'img', orig: d, ops, dataUrl: n.url, src: source, blank, fixed });
+                    if (!blank && $('#sc-optedges').checked) {
+                        try { const bx = await estimateCropBox(d, 0, ops.angle || 0); if (bx) { ops = { ...ops, crop: bx }; n = await processImage(d, ops, MAX_PX, JPEG_Q); edges = true; } } catch (e) { }
+                    }
+                    made.push({ id: ++uid, name, kind: 'img', orig: d, ops, dataUrl: n.url, src: source, blank, fixed, edges });
                 }
                 catch (e) { toast('تعذّر فتح الصورة: ' + name + ' (جرّب JPG أو PDF)', true); }
             }
@@ -290,7 +317,7 @@
                 '<div class="sc-edmain"><div class="sc-edview" id="sc-edview"><div class="sc-edwrap" id="sc-edwrap"><canvas id="sc-edc"></canvas><div id="sc-edsel" hidden></div></div></div>' +
                 '<div class="sc-edtools">' +
                 '<div class="sc-row"><button class="sc-ghost" data-e="rl">⟲ تدوير يسار</button><button class="sc-ghost" data-e="rr">⟳ تدوير يمين</button></div>' +
-                '<div class="sc-row"><button class="sc-ghost" data-e="skew">📐 تصحيح الميل تلقائياً</button></div>' +
+                '<div class="sc-row"><button class="sc-ghost" data-e="skew">📐 تصحيح الميل تلقائياً</button><button class="sc-ghost" data-e="edges">🔲 حذف الحواف تلقائياً</button></div>' +
                 '<label class="sc-f"><span>زاوية الميل: <b id="sc-v-angle">0</b>°</span><input type="range" id="sc-r-angle" min="-10" max="10" step="0.1"></label>' +
                 '<label class="sc-f"><span>السطوع: <b id="sc-v-brightness">1</b></span><input type="range" id="sc-r-brightness" min="0.6" max="1.6" step="0.05"></label>' +
                 '<label class="sc-f"><span>التباين: <b id="sc-v-contrast">1</b></span><input type="range" id="sc-r-contrast" min="0.6" max="2.2" step="0.05"></label>' +
@@ -317,6 +344,7 @@
                 const a = b.dataset.e;
                 if (a === 'rl') { o.rot = (o.rot + 270) % 360; o.crop = null; } else if (a === 'rr') { o.rot = (o.rot + 90) % 360; o.crop = null; }
                 else if (a === 'skew') { b.disabled = true; b.textContent = '⏳ …'; try { const base = await processImage(p.orig, { rot: o.rot }, 900, 0.7); o.angle = Math.max(-10, Math.min(10, await estimateSkew(base.url))); } catch (e) { } b.disabled = false; b.textContent = '📐 تصحيح الميل تلقائياً'; }
+                else if (a === 'edges') { b.disabled = true; b.textContent = '⏳ …'; try { const bx = await estimateCropBox(p.orig, o.rot, o.angle); if (bx) o.crop = bx; else toast('لم تُكتشف حواف خارجية لحذفها'); } catch (e) { } b.disabled = false; b.textContent = '🔲 حذف الحواف تلقائياً'; }
                 else if (a === 'nocrop') o.crop = null; else if (a === 'zoom') zoom = !zoom; else if (a === 'reset') Object.assign(o, { rot: 0, angle: 0, contrast: 1, brightness: 1, gray: false, bw: false, crop: null });
                 syncUI(); draw();
             });
@@ -459,7 +487,7 @@
             if (!pages.length) box.innerHTML = '<div class="sc-empty"><div>🗂️</div><b>لا توجد صفحات بعد</b><small>ابدأ المسح أو استورد ملفات، وستظهر الصفحات هنا للمراجعة قبل الحفظ.</small></div>';
             pages.forEach((p, i) => {
                 const d = doc.createElement('div'); d.className = 'sc-pg';
-                d.innerHTML = '<span class="sc-num">' + (i + 1) + '</span>' + (p.blank ? '<span class="sc-blank" title="تبدو فارغة">فارغة؟</span>' : '') + (p.fixed ? '<span class="sc-fixed" title="تم تصحيح الميل تلقائياً — اضغط للتحرير">↻ ' + Math.abs(p.fixed).toFixed(1) + '°</span>' : '') +
+                d.innerHTML = '<span class="sc-num">' + (i + 1) + '</span>' + (p.blank ? '<span class="sc-blank" title="تبدو فارغة">فارغة؟</span>' : '') + (p.fixed ? '<span class="sc-fixed" title="تم تصحيح الميل تلقائياً — اضغط للتحرير">↻ ' + Math.abs(p.fixed).toFixed(1) + '°</span>' : '') + (p.edges ? '<span class="sc-fixed sc-edg" title="تم حذف الحواف الخارجية — اضغط للتحرير">✂ حواف</span>' : '') +
                     (p.kind === 'img' ? '<img src="' + p.dataUrl + '" alt="" data-a="edit" title="اضغط للتحرير">' : '<div class="sc-pdf">PDF</div>') +
                     '<div class="sc-nm" title="' + esc(p.name) + '">' + esc(p.name.slice(0, 22)) + '</div>' +
                     '<div class="sc-act"><button data-a="r" title="تقديم">→</button><button data-a="l" title="تأخير">←</button>' + (p.kind === 'img' ? '<button data-a="rot" title="تدوير">⟳</button><button data-a="edit" title="تحرير">✎</button>' : '') + '<button data-a="x" title="حذف" class="del">✕</button></div>';
@@ -522,7 +550,7 @@
 .sc-pdf{height:130px;display:flex;align-items:center;justify-content:center;background:#fdecea;border-radius:8px;font-weight:800;color:#c0392b;font-size:20px}
 .sc-num{position:absolute;top:4px;right:4px;z-index:1;background:var(--pri2);color:#fff;border-radius:999px;min-width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
 .sc-blank{position:absolute;top:4px;left:4px;z-index:1;background:var(--warn);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}
-.sc-fixed{position:absolute;top:4px;left:4px;z-index:1;background:var(--ok);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}.sc-blank~.sc-fixed{top:26px}
+.sc-fixed{position:absolute;top:4px;left:4px;z-index:1;background:var(--ok);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}.sc-blank~.sc-fixed{top:26px}.sc-fixed.sc-edg{top:auto;bottom:4px;background:#0a6cff}
 .sc-nm{font-size:11.5px;color:var(--mu);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-act{display:flex;justify-content:center;gap:4px;margin-top:6px}.sc-act button{background:var(--bg);border:1px solid var(--bd);color:var(--tx);border-radius:7px;width:28px;height:26px;cursor:pointer;font-size:13px}.sc-act button:hover{border-color:var(--pri);color:var(--pri)}.sc-act button.del:hover{border-color:var(--bad);color:var(--bad)}
 .sc-foot{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:14px 20px;border-top:1px solid var(--bd);background:var(--bg)}.sc-foot .sc-f{flex:1;min-width:180px}.sc-foot .sc-f.t{flex:0 0 190px;min-width:150px}.sc-prev{flex-basis:100%;order:3;font-size:13px;font-weight:700;color:var(--ok);min-height:18px}
@@ -568,7 +596,7 @@
    <div class="sc-drop" id="sc-drop"><div class="big">📤</div><p>اسحب الصور أو ملفات PDF وأفلتها هنا</p><button class="sc-primary" id="sc-up" style="padding:10px 18px;font-size:14px">اختيار ملفات</button><input type="file" id="sc-file" multiple accept="image/*,.pdf" hidden></div>
   </div>
   <div class="sc-ph"><h4>الصفحات <span class="sc-badge" id="sc-count">0</span></h4><button class="sc-ghost" id="sc-ocr" disabled title="يقرأ الصفحة الأولى ويقترح رقم الحاوية">🔎 قراءة رقم الحاوية (OCR)</button><button class="sc-ghost sc-sp" id="sc-clear" disabled>🗑 مسح الكل</button></div>
-  <div class="sc-opts"><label class="sc-chk"><input type="checkbox" id="sc-optblank"> حذف الصفحات الفارغة تلقائياً</label><label class="sc-chk" title="يقدّر ميل كل صفحة ويعدّلها فور استلامها"><input type="checkbox" id="sc-optdeskew"> تصحيح الميل تلقائياً</label><label class="sc-chk"><input type="checkbox" id="sc-optocr"> قراءة رقم الحاوية تلقائياً بعد المسح</label><label class="sc-chk" title="يضيف نصاً مخفياً (إنجليزي وأرقام) للبحث داخل الملف — أبطأ في الحفظ"><input type="checkbox" id="sc-optsearch"> PDF قابل للبحث (إنجليزي/أرقام)</label></div>
+  <div class="sc-opts"><label class="sc-chk"><input type="checkbox" id="sc-optblank"> حذف الصفحات الفارغة تلقائياً</label><label class="sc-chk" title="يقدّر ميل كل صفحة ويعدّلها فور استلامها"><input type="checkbox" id="sc-optdeskew"> تصحيح الميل تلقائياً</label><label class="sc-chk" title="يقص الحواف الداكنة وظل غطاء السكانر حول الورقة فور استلام كل صفحة"><input type="checkbox" id="sc-optedges"> حذف الحواف الخارجية تلقائياً</label><label class="sc-chk"><input type="checkbox" id="sc-optocr"> قراءة رقم الحاوية تلقائياً بعد المسح</label><label class="sc-chk" title="يضيف نصاً مخفياً (إنجليزي وأرقام) للبحث داخل الملف — أبطأ في الحفظ"><input type="checkbox" id="sc-optsearch"> PDF قابل للبحث (إنجليزي/أرقام)</label></div>
   <div class="sc-sug" id="sc-sug" hidden></div>
   <div id="sc-pages" class="empty"></div>
  </div>
@@ -581,7 +609,7 @@
             doc.body.appendChild(root);
             // خيارات محفوظة
             const opt = (id, key, def) => { const el = $(id); el.checked = store.get(key, def) === '1'; el.onchange = () => store.set(key, el.checked ? '1' : '0'); };
-            opt('#sc-optblank', 'scOptBlank', '1'); opt('#sc-optdeskew', 'scOptDeskew', '1'); opt('#sc-optocr', 'scOptOcr', '0'); opt('#sc-optsearch', 'scOptSearch', '0');
+            opt('#sc-optblank', 'scOptBlank', '1'); opt('#sc-optdeskew', 'scOptDeskew', '1'); opt('#sc-optedges', 'scOptEdges', '1'); opt('#sc-optocr', 'scOptOcr', '0'); opt('#sc-optsearch', 'scOptSearch', '0');
             $('#sc-type').value = store.get('scDocType', ''); $('#sc-type').onchange = () => { store.set('scDocType', $('#sc-type').value); updatePreview(); };
             const tabs = root.querySelectorAll('.sc-tabs button');
             tabs.forEach(t => t.onclick = () => { tabs.forEach(x => x.classList.toggle('on', x === t)); root.querySelectorAll('.sc-pane').forEach(p => p.hidden = p.dataset.pane !== t.dataset.tab); if (t.dataset.tab !== 'cam') camStop(); });
@@ -622,6 +650,6 @@
                 inst.__folder = folderName; folderInst.set(win, inst);
             } else inst.open();
         },
-        _t: { isoValid, detectContainers, isBlank, estimateSkew, processImage }   // للاختبار
+        _t: { isoValid, detectContainers, isBlank, estimateSkew, estimateCropBox, processImage }   // للاختبار
     };
 })();

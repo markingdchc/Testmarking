@@ -1,0 +1,54 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "admin",
+      "password": "sha256:240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "fullName": "المدير العام",
+      "role": "admin",
+      "lineIds": [
+        "*"
+      ],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    },
+    {
+      "id": 2,
+      "username": "msc",
+      "password": "sha256:8559e1bbd034b35adb42718b7a43ad4ee2ec8fba981718271ae5e239a129f3a2",
+      "fullName": "Ahmed Abdelrahman",
+      "role": "viewer",
+      "lineIds": [
+        "MSC",
+        "WEC"
+      ],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    },
+    {
+      "id": 3,
+      "username": "yml",
+      "password": "sha256:b72c0cc88f8860c62e6d446b49fc31a7de32f61d95c30b4b3dbee5fba01f421d",
+      "fullName": "Yang Ming Shipping",
+      "role": "viewer",
+      "lineIds": [
+        "YML"
+      ],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    },
+    {
+      "id": 4,
+      "username": "zim",
+      "password": "zim#123",
+      "fullName": "Egy Mar",
+      "role": "viewer",
+      "lineIds": [
+        "ZIM"
+      ],
+      "status": "active",
+      "createdAt": "2026-10-13"
+    }
+  ],
+  "loginAttempts": {}
+}
