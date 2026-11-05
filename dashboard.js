@@ -153,7 +153,72 @@
                 ${L ? `<ul class="dv-list">${L.files.map(f => row(f)).join('')}</ul>` : '<div class="dv-empty">لا توجد ملفات بعد</div>'}</div>
             <div class="dv-card"><h3>🕘 آخر الملفات</h3>
                 ${d.recent.length ? `<ul class="dv-list">${d.recent.map(f => row(f, true)).join('')}</ul>` : '<div class="dv-empty">لا توجد ملفات</div>'}</div>
+        </div>${extrasHtml()}`;
+        bindExtras(d);
+    }
+
+
+    // ---------- إحصاءات المسح + النسخ الاحتياطي ----------
+    const isAdm = () => { const u = typeof getCurrentUser === 'function' ? getCurrentUser() : null; return !!(u && u.role === 'admin'); };
+    const canScanStats = () => typeof hasPerm === 'function' ? !!hasPerm('scan') : isAdm();
+    function extrasHtml() {
+        if (!canScanStats() && !isAdm()) return '';
+        return `<div class="dv-grid g2" id="dvExtras">
+            ${canScanStats() ? '<div class="dv-card" id="dvScan"><h3>📠 إحصاءات المسح <small id="dvScanWhen"></small></h3><div id="dvScanBody"><div class="dv-empty">اضغط «تحميل» لقراءة سجلات المسح من GitHub (يلزم رمز GitHub مفعّل)</div></div><p class="dv-note"><button class="dv-btn" id="dvScanLoad">📊 تحميل الإحصاءات</button></p></div>' : ''}
+            ${isAdm() ? '<div class="dv-card" id="dvBackup"><h3>💾 النسخ الاحتياطي وحجم المستودع</h3><div id="dvBackBody"><div class="dv-empty">⏳ جارٍ فحص حجم المستودع…</div></div><p class="dv-note"><button class="dv-btn" id="dvBackDl">⬇️ تنزيل نسخة احتياطية (بيانات)</button><br>تشمل: فهرس الملفات وسجلات المسح (_info.json) وملف المستخدمين وملفات إعدادات المسح. <b>احفظها في مكان آمن</b> لأن ملف المستخدمين قد يحوي كلمات مرور. الملفات نفسها محفوظة في مستودع GitHub — لنسخة كاملة استخدم <b>tools/backup-repo.bat</b>.</p></div>' : ''}
         </div>`;
+    }
+    function scanCard(entries, when) {
+        const body = $('#dvScanBody'); if (!body) return;
+        if (!entries.length) { body.innerHTML = '<div class="dv-empty">لا توجد عمليات مسح مسجّلة بعد</div>'; return; }
+        const docs = e => (e.files || []).length || 1, now = Date.now(), within = d => entries.filter(e => now - new Date(e.t).getTime() <= d * 86400000);
+        const sum = (a, f) => a.reduce((x, e) => x + f(e), 0), cnt = (key) => Object.entries(entries.reduce((m, e) => { const k = key(e) || '—'; m[k] = (m[k] || 0) + docs(e); return m; }, {})).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, value]) => ({ name, value }));
+        const days = []; for (let i = 13; i >= 0; i--) { const dt = new Date(now - i * 86400000).toISOString().slice(0, 10); days.push({ name: dt, value: sum(entries.filter(e => (e.t || '').slice(0, 10) === dt), docs) }); }
+        $('#dvScanWhen').textContent = when ? '· آخر تحميل ' + fmtDate(when) : '';
+        body.innerHTML = `<div class="dv-grid" style="margin-bottom:14px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">${kpi('📄', 'مستندات ممسوحة', sum(entries, docs), 'كل المسجّل', '#0e7490')}${kpi('🗓️', 'آخر 7 أيام', sum(within(7), docs), sum(within(7), e => e.pages || 0) + ' صفحة', '#10b981')}${kpi('📆', 'آخر 30 يوماً', sum(within(30), docs), sum(within(30), e => e.pages || 0) + ' صفحة', '#f59e0b')}</div>
+            <div class="dv-grid g2"><div><h4 style="margin:0 0 8px;font-size:13px;color:var(--mut)">آخر 14 يوماً</h4>${vbars(days)}</div><div><h4 style="margin:0 0 8px;font-size:13px;color:var(--mut)">أكثر المستخدمين مسحاً</h4>${hbars(cnt(e => e.user))}<h4 style="margin:12px 0 8px;font-size:13px;color:var(--mut)">أنواع المستندات</h4>${hbars(cnt(e => e.type))}</div></div>`;
+    }
+    function bindExtras(d) {
+        const btn = $('#dvScanLoad');
+        if (btn) {
+            try { const c = JSON.parse(localStorage.getItem('scanStatsCache') || 'null'); if (c && c.entries) scanCard(c.entries, c.t); } catch (e) { }
+            btn.onclick = async () => {
+                if (!window.Scanner || !Scanner.scanStats) return toast('وحدة المسح غير محمّلة');
+                if (!localStorage.getItem('github_token')) return toast('يلزم رمز GitHub مفعّلاً في هذا الجهاز لقراءة السجلات');
+                btn.disabled = true; const names = d.ships.slice(0, 40).map(x => x.name);
+                try { const ent = await Scanner.scanStats(names, (i, n) => { btn.textContent = '⏳ ' + i + ' / ' + n; }); localStorage.setItem('scanStatsCache', JSON.stringify({ t: Date.now(), entries: ent.map(e => ({ t: e.t, user: e.user, files: e.files, pages: e.pages, type: e.type, folder: e.folder })) })); scanCard(ent, Date.now()); }
+                catch (e) { toast('تعذّر تحميل الإحصاءات: ' + e.message); }
+                btn.disabled = false; btn.textContent = '📊 تحديث الإحصاءات';
+            };
+        }
+        const dl = $('#dvBackDl');
+        if (dl) {
+            const paint = (sizeKb) => {
+                const last = +localStorage.getItem('lastBackupAt') || 0, days = last ? Math.floor((Date.now() - last) / 86400000) : null, pct = sizeKb ? sizeKb / 1048576 * 100 : 0;
+                const col = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#10b981';
+                $('#dvBackBody').innerHTML = (sizeKb ? `<div class="dv-bar"><span class="l">حجم المستودع</span><span class="t"><i style="width:${Math.max(3, Math.min(100, pct))}%;background:${col}"></i></span><span class="v">${fmtSize(sizeKb * 1024)}</span></div><p class="dv-note">${pct >= 90 ? '🚨 المستودع قارب الحد الموصى به من GitHub (1 GB) — انقل الأرشيف القديم أو أنشئ مستودعاً جديداً.' : pct >= 70 ? '⚠️ تجاوز 70% من الحد الموصى به (1 GB) — خطّط لنقل الأرشيف القديم.' : '✓ حجم آمن (الحد الموصى به 1 GB).'}</p>` : '<div class="dv-empty">تعذّر قراءة حجم المستودع</div>')
+                    + `<p class="dv-note">${last ? (days >= 7 ? '⚠️ ' : '✓ ') + 'آخر نسخة احتياطية: ' + fmtDate(last) + ' (منذ ' + days + ' يوماً)' : '⚠️ لم تُنزَّل نسخة احتياطية من هذا الجهاز بعد'}${last && days < 7 ? '' : ' — يُنصح بنسخة أسبوعياً.'}</p>`;
+            };
+            paint(0);
+            const tok = localStorage.getItem('github_token');
+            fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} }).then(r => r.ok ? r.json() : null).then(j => paint(j && j.size || 0)).catch(() => paint(0));
+            dl.onclick = async () => {
+                dl.disabled = true; dl.textContent = '⏳ جارٍ التجهيز…';
+                try {
+                    const out = { app: 'marking.dchc', exportedAt: new Date().toISOString(), repo: GH_OWNER + '/' + GH_REPO, branch: GH_BRANCH, folders: d.ships.map(s => ({ name: s.name, files: s.files.map(f => ({ name: f.name, size: f.size, date: f.date })) })), scanProfiles: localStorage.getItem('scProfiles') || '{}', activityLog: (() => { try { return JSON.parse(localStorage.getItem('activity_log') || '[]'); } catch (e) { return []; } })() };
+                    try { const r = await fetch(USERS_URL + '?t=' + Date.now()); if (r.ok) out.users = await r.json(); } catch (e) { }
+                    if (localStorage.getItem('github_token') && window.Scanner && Scanner.folderInfo) {
+                        out.folderInfo = {}; const q = d.ships.map(s => s.name); let i = 0;
+                        const wk = async () => { while (q.length) { const f = q.shift(); try { const inf = await Scanner.folderInfo(f); if (inf) out.folderInfo[f] = inf; } catch (e) { } dl.textContent = '⏳ ' + (++i) + ' / ' + d.ships.length; } };
+                        await Promise.all([wk(), wk(), wk()]);
+                    }
+                    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' })); a.download = 'archive-backup-' + new Date().toISOString().slice(0, 10) + '.json'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+                    localStorage.setItem('lastBackupAt', String(Date.now())); toast('✅ تم تنزيل النسخة الاحتياطية'); paint(0);
+                    fetch('https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} }).then(r => r.ok ? r.json() : null).then(j => j && paint(j.size || 0)).catch(() => { });
+                } catch (e) { toast('تعذّر إنشاء النسخة: ' + e.message); }
+                dl.disabled = false; dl.textContent = '⬇️ تنزيل نسخة احتياطية (بيانات)';
+            };
+        }
     }
 
     // ---------- تحميل اللوحة + التحديث التلقائي ----------

@@ -158,6 +158,7 @@ async function login(username, password, rememberMe = false) {
         fullName: user.fullName,
         role: user.role,
         lineIds: user.lineIds,
+        perms: Array.isArray(user.perms) ? user.perms : [],
         status: user.status,
         loginTime: Date.now()
     };
@@ -247,6 +248,16 @@ function getCurrentUser() {
 function isLoggedIn() {
     return getCurrentUser() !== null;
 }
+
+// صلاحيات دقيقة: المدير يملك كل شيء، وغيره يحتاج وجود الصلاحية في حقل perms بملف users.json
+// القيم المعروفة: "scan" (مسح)، "upload" (رفع)، "delete" (حذف) أو "*" لكلها
+function hasPerm(p) {
+    const u = getCurrentUser();
+    if (!u) return false;
+    if (u.role === 'admin') return true;
+    return Array.isArray(u.perms) && (u.perms.includes(p) || u.perms.includes('*'));
+}
+window.hasPerm = hasPerm;
 
 function isAdmin() {
     const u = getCurrentUser();
@@ -409,6 +420,7 @@ async function initAuth() {
                     fullName: fresh.fullName,
                     role: fresh.role,
                     lineIds: fresh.lineIds,
+                    perms: Array.isArray(fresh.perms) ? fresh.perms : [],
                     status: fresh.status,
                     loginTime: currentUser.loginTime
                 };

@@ -13,7 +13,7 @@
     const LEVELS = [{ px: MAX_PX, q: JPEG_Q }, { px: 1600, q: 0.65 }, { px: 1300, q: 0.5 }, { px: 1000, q: 0.42 }];
     const limitBytes = () => window.SCANNER_LIMIT_BYTES || 20 * 1024 * 1024;
     const IMG_RE = /\.(jpe?g|png|bmp|tiff?|webp)$/i, PDF_RE = /\.pdf$/i;
-    const DOC_TYPES = [['', 'بدون نوع'], ['BL', 'بوليصة شحن (BL)'], ['INVOICE', 'فاتورة'], ['PACKING_LIST', 'قائمة تعبئة'], ['DO', 'إذن تسليم (DO)'], ['RECEIPT', 'إيصال'], ['CUSTOMS', 'جمارك'], ['OTHER', 'أخرى']];
+    const DOC_TYPES = [['', 'بدون نوع'], ['BL', 'بوليصة شحن (BL)'], ['INVOICE', 'فاتورة'], ['PACKING_LIST', 'قائمة تعبئة'], ['DO', 'إذن تسليم (DO)'], ['RECEIPT', 'إيصال'], ['CUSTOMS', 'جمارك'], ['OTHER', 'أخرى'], ['__auto', '🤖 تلقائي (من محتوى المستند)']];
     const store = {
         get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
         set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
@@ -49,6 +49,8 @@
             const cr = ops.crop, c2 = mkCanvas(cr.w * sw, cr.h * sh);
             c2.getContext('2d').drawImage(c, cr.x * sw, cr.y * sh, cr.w * sw, cr.h * sh, 0, 0, c2.width, c2.height); c = c2;
         }
+        if (ops.flat) flattenBg(c);
+        if (ops.clean) cleanSpecks(c);
         if (ops.bw) {
             const cx = c.getContext('2d'), id = cx.getImageData(0, 0, c.width, c.height), d = id.data, g = new Uint8Array(d.length / 4);
             for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
@@ -112,6 +114,107 @@
         bx.w = 1 - bx.x - Math.min(0.4, R + (R > 0.004 ? ins : 0)); bx.h = 1 - bx.y - Math.min(0.4, B + (B > 0.004 ? ins : 0));
         if (bx.w * bx.h < 0.55) return null;                // أمان: لا نقص أكثر من اللازم
         return bx;
+    }
+
+    // تسوية الخلفية: إزالة الظلال والإضاءة غير المنتظمة (قسمة الصورة على تقدير للخلفية)
+    function flattenBg(c) {
+        const W = c.width, H = c.height, cx = c.getContext('2d'), K = 24;
+        const sw = Math.max(2, Math.round(W / K)), sh = Math.max(2, Math.round(H / K));
+        const sm = mkCanvas(sw, sh), sx = sm.getContext('2d'); sx.imageSmoothingQuality = 'high'; sx.drawImage(c, 0, 0, sw, sh);
+        const a = sx.getImageData(0, 0, sw, sh).data, b = new Uint8ClampedArray(a.length);
+        for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+            for (let ch = 0; ch < 3; ch++) {          // توسيع (أعلى قيمة في 5×5) لإبعاد أثر الحبر عن تقدير الخلفية
+                let m = 0;
+                for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= sh || xx >= sw) continue; const v = a[(yy * sw + xx) * 4 + ch]; if (v > m) m = v; }
+                b[(y * sw + x) * 4 + ch] = m;
+            }
+            b[(y * sw + x) * 4 + 3] = 255;
+        }
+        sx.putImageData(new ImageData(b, sw, sh), 0, 0);
+        const bg = mkCanvas(W, H), bx = bg.getContext('2d'); bx.imageSmoothingEnabled = true; bx.imageSmoothingQuality = 'high'; bx.drawImage(sm, 0, 0, W, H);
+        const id = cx.getImageData(0, 0, W, H), d = id.data, g = bx.getImageData(0, 0, W, H).data;
+        for (let i = 0; i < d.length; i += 4) for (let ch = 0; ch < 3; ch++) d[i + ch] = Math.min(255, d[i + ch] * 255 / Math.max(g[i + ch], 60));
+        cx.putImageData(id, 0, 0);
+    }
+    // إزالة النقاط الصغيرة (ضجيج) وثقوب التخريم/الدباسة القريبة من الحواف
+    function cleanSpecks(c) {
+        const W = c.width, H = c.height, cx = c.getContext('2d'), id = cx.getImageData(0, 0, W, H), d = id.data, N = W * H;
+        const g = new Uint8Array(N); for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+        const th = Math.min(150, otsu(g)), lab = new Uint8Array(N); for (let j = 0; j < N; j++) lab[j] = g[j] < th ? 1 : 0;
+        const buf = new Int32Array(N), speck = Math.max(4, Math.round(Math.pow(W / 700, 2))), minH = W * 0.012, maxH = W * 0.045, edge = 0.09;
+        let removed = 0;
+        for (let s0 = 0; s0 < N; s0++) {
+            if (lab[s0] !== 1) continue;
+            let head = 0, tail = 0, x0 = W, x1 = 0, y0 = H, y1 = 0; buf[tail++] = s0; lab[s0] = 2;
+            while (head < tail) {
+                const p = buf[head++], y = (p / W) | 0, x = p - y * W;
+                if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+                if (x > 0 && lab[p - 1] === 1) { lab[p - 1] = 2; buf[tail++] = p - 1; }
+                if (x < W - 1 && lab[p + 1] === 1) { lab[p + 1] = 2; buf[tail++] = p + 1; }
+                if (y > 0 && lab[p - W] === 1) { lab[p - W] = 2; buf[tail++] = p - W; }
+                if (y < H - 1 && lab[p + W] === 1) { lab[p + W] = 2; buf[tail++] = p + W; }
+            }
+            const w = x1 - x0 + 1, h = y1 - y0 + 1;
+            let rm = tail <= speck;
+            if (!rm && w >= minH && w <= maxH && h >= minH && h <= maxH && Math.abs(w - h) <= 0.3 * Math.max(w, h) && tail / (w * h) > 0.6) {
+                const mx = (x0 + x1) / 2 / W, my = (y0 + y1) / 2 / H; rm = mx < edge || mx > 1 - edge || my < edge || my > 1 - edge;
+            }
+            if (rm) { removed++; for (let k = 0; k < tail; k++) { const q = buf[k] * 4; d[q] = d[q + 1] = d[q + 2] = 255; } }
+        }
+        cx.putImageData(id, 0, 0); return removed;
+    }
+    // بصمة الصورة (dHash 17×16 = 256 بت) لكشف المستندات المكررة
+    async function dhash(src) {
+        const im = await loadImg(src), c = mkCanvas(17, 16), x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 17, 16); x.drawImage(im, 0, 0, 17, 16);
+        const d = x.getImageData(0, 0, 17, 16).data, L = (xx, yy) => { const i = (yy * 17 + xx) * 4; return d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; };
+        let hex = '', nib = 0, nb = 0;
+        for (let yy = 0; yy < 16; yy++) for (let xx = 0; xx < 16; xx++) { nib = (nib << 1) | (L(xx, yy) > L(xx + 1, yy) ? 1 : 0); if (++nb === 4) { hex += nib.toString(16); nib = 0; nb = 0; } }
+        return hex;
+    }
+    function hamming(a, b) { let n = 0; for (let i = 0; i < a.length; i++) { let v = parseInt(a[i], 16) ^ parseInt(b[i], 16); while (v) { n += v & 1; v >>= 1; } } return n; }
+    // تصنيف نوع المستند من كلمات النص المقروء (OCR)
+    const CLS = {
+        BL: [['bill of lading', 3], ['b/l', 1], ['shipper', 1], ['consignee', 1], ['notify party', 2], ['port of loading', 1], ['port of discharge', 1], ['ocean vessel', 1], ['بوليصة', 3]],
+        INVOICE: [['invoice', 3], ['total amount', 1], ['unit price', 1], ['amount due', 1], ['payment terms', 1], ['vat', 1], ['فاتورة', 3]],
+        PACKING_LIST: [['packing list', 3], ['gross weight', 1], ['net weight', 1], ['packages', 1], ['carton', 1], ['قائمة تعبئة', 3]],
+        DO: [['delivery order', 3], ['release', 1], ['please deliver', 2], ['إذن تسليم', 3], ['أمر تسليم', 3]],
+        RECEIPT: [['receipt', 3], ['received from', 2], ['إيصال', 3], ['سند قبض', 3]],
+        CUSTOMS: [['customs', 2], ['declaration', 1], ['hs code', 1], ['duty', 1], ['بيان جمركي', 3], ['جمارك', 2], ['جمرك', 2]]
+    };
+    function classifyDoc(text) {
+        const T = String(text || '').toLowerCase(); let best = '', bs = 0;
+        for (const k in CLS) { let sc = 0; CLS[k].forEach(([w, wt]) => { if (T.includes(w)) sc += wt; }); if (sc > bs) { bs = sc; best = k; } }
+        return bs >= 3 ? best : '';
+    }
+    // طابور الحفظ دون اتصال (IndexedDB) — يُعاد رفعه تلقائياً عند عودة الاتصال
+    async function qList() { return (await kvGet('qidx')) || []; }
+    async function qAdd(job) { const id = 'q' + Date.now() + Math.random().toString(36).slice(2, 6); await kvSet('q:' + id, { ...job, id, tries: 0, t: new Date().toISOString() }); const ix = await qList(); ix.push(id); await kvSet('qidx', ix); return id; }
+    async function qGet(id) { return await kvGet('q:' + id); }
+    async function qDel(id) { await kvSet('qidx', (await qList()).filter(x => x !== id)); try { const d = await idb(); d.transaction('kv', 'readwrite').objectStore('kv').delete('q:' + id); } catch (e) { } }
+    let flushing = false;
+    async function qFlush(manual) {
+        const res = { ok: 0, fail: 0, folders: [] };
+        if (flushing || typeof uploadBase64ToArchive !== 'function') return res;
+        flushing = true;
+        try {
+            for (const id of await qList()) {
+                const j = await qGet(id); if (!j) { await qDel(id); continue; }
+                if (!manual && j.tries >= 5) continue;
+                let r = null; try { r = await uploadBase64ToArchive(j.folder, j.name, j.b64); } catch (e) { r = null; }
+                if (r && r.success) { await qDel(id); res.ok++; if (!res.folders.includes(j.folder)) res.folders.push(j.folder); if (j.entry) await appendScanLog(j.folder, j.entry); }
+                else { j.tries = (j.tries || 0) + 1; await kvSet('q:' + id, j); res.fail++; }
+            }
+        } finally { flushing = false; }
+        return res;
+    }
+    // بصمات الملفات المحفوظة لكل مجلد (محلياً) لمنع التكرار
+    async function hashList(folder) { return (await kvGet('dh:' + folder)) || []; }
+    async function hashAdd(folder, items) { if (items.length) await kvSet('dh:' + folder, (await hashList(folder)).concat(items).slice(-300)); }
+    // إحصاءات المسح من سجلات المجلدات (للوحة المعلومات)
+    async function scanStats(folders, onProgress) {
+        const out = [], q = folders.slice(); let i = 0;
+        const worker = async () => { while (q.length) { const f = q.shift(); try { const info = await ghInfo(f); ((info && info.scanLog) || []).forEach(e => out.push({ ...e, folder: f })); } catch (e) { } if (onProgress) onProgress(++i, folders.length); } };
+        await Promise.all([worker(), worker(), worker()]); return out;
     }
     // ISO 6346
     function isoValid(code) {
@@ -187,7 +290,7 @@
             for (const f of files) {
                 const name = f.name || ('scan_' + Date.now()), d = await fileToDataUrl(f);
                 try {
-                    let n = await processImage(d, {}, MAX_PX, JPEG_Q), ops = {}, fixed = 0, edges = false;
+                    let n = await processImage(d, {}, MAX_PX, JPEG_Q), ops = {}, fixed = 0, edges = false, cleaned = false;
                     const blank = await isBlank(n.url);
                     if (!blank && $('#sc-optdeskew').checked) {
                         try { const a = await estimateSkew(n.url); if (Math.abs(a) >= 0.4 && Math.abs(a) <= 7.5) { ops = { angle: a }; n = await processImage(d, ops, MAX_PX, JPEG_Q); fixed = a; } } catch (e) { }
@@ -195,16 +298,20 @@
                     if (!blank && $('#sc-optedges').checked) {
                         try { const bx = await estimateCropBox(d, 0, ops.angle || 0); if (bx) { ops = { ...ops, crop: bx }; n = await processImage(d, ops, MAX_PX, JPEG_Q); edges = true; } } catch (e) { }
                     }
-                    made.push({ id: ++uid, name, kind: 'img', orig: d, ops, dataUrl: n.url, src: source, blank, fixed, edges });
+                    if (!blank && $('#sc-optclean').checked) {
+                        try { ops = { ...ops, flat: true, clean: true }; n = await processImage(d, ops, MAX_PX, JPEG_Q); cleaned = true; } catch (e) { }
+                    }
+                    made.push({ id: ++uid, name, kind: 'img', orig: d, ops, dataUrl: n.url, src: source, blank, fixed, edges, cleaned });
                 }
                 catch (e) { toast('تعذّر فتح الصورة: ' + name + ' (جرّب JPG أو PDF)', true); }
             }
             let keep = made;
-            if ($('#sc-optblank').checked && made.some(p => !p.blank)) { keep = made.filter(p => !p.blank); skipped = made.length - keep.length; }
+            if ($('#sc-optblank').checked && !$('#sc-optsplit').checked && made.some(p => !p.blank)) { keep = made.filter(p => !p.blank); skipped = made.length - keep.length; }
             pages.push(...keep);
             if (skipped) toast('🧹 تم تجاهل ' + skipped + ' صفحة فارغة');
             render();
             if ($('#sc-optocr').checked && keep.length) runOcr();
+            if (needAnalysis()) analyzeAll();
         }
         async function addFile(file, source) {
             const name = file.name || ('scan_' + Date.now());
@@ -218,7 +325,7 @@
             if (imgs.length) await addImages(imgs, source);
             for (const f of rest) await addFile(f, source);
         }
-        async function reprocess(p) { const n = await processImage(p.orig, p.ops, MAX_PX, JPEG_Q); p.dataUrl = n.url; p.ocr = null; }
+        async function reprocess(p) { const n = await processImage(p.orig, p.ops, MAX_PX, JPEG_Q); p.dataUrl = n.url; p.ocr = null; p.an = false; p.cont = ''; p.type = ''; }
 
         // ---------- مجلد المسح ----------
         async function pickFolder() {
@@ -287,12 +394,14 @@
             const go = $('#sc-go'), sel = $('#sc-dev'); if (!sel.value) return;
             const dev = devices.find(x => x.id === sel.value) || {}; store.set('scanDevice', sel.value); lastDevice = dev.name || sel.value;
             go.disabled = true; go.textContent = '⏳ جارٍ المسح… لا تحرّك الأوراق';
+            let okScan = false;
             try {
                 const r = await bj('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeout: 300000, body: JSON.stringify({ device: sel.value, engine: dev.engine, dpi: +$('#sc-dpi').value, color: $('#sc-color').value, source: $('#sc-source').value }) });
                 const files = r.pages.map(pg => { const bin = atob(pg.base64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const b = new Blob([u], { type: pg.mime }); b.name = pg.name; return b; });
-                await addImages(files, 'سكانر: ' + lastDevice); toast('📠 تم مسح ' + r.pages.length + ' صفحة');
+                await addImages(files, 'سكانر: ' + lastDevice); toast('📠 تم مسح ' + r.pages.length + ' صفحة'); okScan = true;
             } catch (e) { lastErr = 'scan: ' + e.message; toast('❌ ' + (e.name === 'AbortError' ? 'انتهت المهلة' : e.message), true); }
             go.disabled = false; go.textContent = '📠 ابدأ المسح'; render();
+            if (okScan && optOn('#sc-optcont')) setTimeout(() => { if (win.confirm('✅ تمت إضافة الصفحات.\nضع المستند التالي في السكانر ثم اضغط «موافق» لمسح دفعة أخرى، أو «إلغاء» للإنهاء.\n(ضع ورقة فارغة بين المستندات ليفصلها البرنامج تلقائياً)')) bridgeScan(); }, 150);
         }
 
         // ---------- OCR واقتراح الاسم ----------
@@ -312,7 +421,7 @@
         // ---------- محرر الصفحة ----------
         function openEditor(p) {
             const ed = doc.createElement('div'); ed.id = 'sc-ed'; ed.className = 'sc-ov';
-            const o = Object.assign({ rot: 0, angle: 0, contrast: 1, brightness: 1, gray: false, bw: false, crop: null }, p.ops || {});
+            const o = Object.assign({ rot: 0, angle: 0, contrast: 1, brightness: 1, gray: false, bw: false, flat: false, clean: false, crop: null }, p.ops || {});
             ed.innerHTML = '<div class="sc-edbox"><div class="sc-head"><div class="sc-ttl"><div class="sc-ico">✎</div><div><h3>تحرير الصفحة</h3><p class="sc-sub">اسحب على الصورة لتحديد منطقة القص</p></div></div><button class="sc-x" id="sc-edx">✕</button></div>' +
                 '<div class="sc-edmain"><div class="sc-edview" id="sc-edview"><div class="sc-edwrap" id="sc-edwrap"><canvas id="sc-edc"></canvas><div id="sc-edsel" hidden></div></div></div>' +
                 '<div class="sc-edtools">' +
@@ -322,12 +431,13 @@
                 '<label class="sc-f"><span>السطوع: <b id="sc-v-brightness">1</b></span><input type="range" id="sc-r-brightness" min="0.6" max="1.6" step="0.05"></label>' +
                 '<label class="sc-f"><span>التباين: <b id="sc-v-contrast">1</b></span><input type="range" id="sc-r-contrast" min="0.6" max="2.2" step="0.05"></label>' +
                 '<label class="sc-chk"><input type="checkbox" id="sc-c-gray"> رمادي</label><label class="sc-chk"><input type="checkbox" id="sc-c-bw"> أبيض وأسود (للنصوص)</label>' +
+                '<label class="sc-chk" title="يعادل الإضاءة ويزيل ظلال الطي والخلفية الرمادية"><input type="checkbox" id="sc-c-flat"> إزالة الظلال والخلفية</label><label class="sc-chk" title="يحذف النقاط الصغيرة وثقوب التخريم/الدباسة قرب الحواف"><input type="checkbox" id="sc-c-clean"> إزالة النقاط وثقوب الدباسة</label>' +
                 '<div class="sc-row"><button class="sc-ghost" data-e="nocrop">✂ إلغاء القص</button><button class="sc-ghost" data-e="zoom">🔍 تكبير / ملاءمة</button><button class="sc-ghost" data-e="reset">↺ إعادة ضبط</button></div>' +
                 '<div class="sc-row" style="margin-top:auto"><button class="sc-primary" id="sc-edok" style="flex:1">✔ تطبيق</button><button class="sc-ghost" id="sc-edcancel">إلغاء</button></div></div></div></div>';
             root.appendChild(ed);
             const cv = ed.querySelector('#sc-edc'), wrap = ed.querySelector('#sc-edwrap'), sel = ed.querySelector('#sc-edsel'), view = ed.querySelector('#sc-edview');
             let zoom = false, busy = false, again = false, selDrag = null;
-            const syncUI = () => { ['angle', 'brightness', 'contrast'].forEach(k => { ed.querySelector('#sc-r-' + k).value = o[k]; ed.querySelector('#sc-v-' + k).textContent = o[k]; }); ed.querySelector('#sc-c-gray').checked = !!o.gray; ed.querySelector('#sc-c-bw').checked = !!o.bw; };
+            const syncUI = () => { ['angle', 'brightness', 'contrast'].forEach(k => { ed.querySelector('#sc-r-' + k).value = o[k]; ed.querySelector('#sc-v-' + k).textContent = o[k]; }); ed.querySelector('#sc-c-gray').checked = !!o.gray; ed.querySelector('#sc-c-bw').checked = !!o.bw; ed.querySelector('#sc-c-flat').checked = !!o.flat; ed.querySelector('#sc-c-clean').checked = !!o.clean; };
             async function draw() {
                 if (busy) { again = true; return; } busy = true;
                 try { const r = await processImage(p.orig, { ...o, crop: null }, zoom ? 1800 : 900, 0.7), im = await loadImg(r.url); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0); cv.style.width = zoom ? im.naturalWidth + 'px' : '100%'; showSel(); } catch (e) { }
@@ -337,6 +447,8 @@
             ['angle', 'brightness', 'contrast'].forEach(k => ed.querySelector('#sc-r-' + k).oninput = (e) => { o[k] = +e.target.value; ed.querySelector('#sc-v-' + k).textContent = o[k]; draw(); });
             ed.querySelector('#sc-c-gray').onchange = (e) => { o.gray = e.target.checked; draw(); };
             ed.querySelector('#sc-c-bw').onchange = (e) => { o.bw = e.target.checked; draw(); };
+            ed.querySelector('#sc-c-flat').onchange = (e) => { o.flat = e.target.checked; draw(); };
+            ed.querySelector('#sc-c-clean').onchange = (e) => { o.clean = e.target.checked; draw(); };
             wrap.onpointerdown = (e) => { const r = cv.getBoundingClientRect(); selDrag = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; wrap.setPointerCapture(e.pointerId); };
             wrap.onpointermove = (e) => { if (!selDrag) return; const r = cv.getBoundingClientRect(), cl = (v) => Math.min(1, Math.max(0, v)), x = cl((e.clientX - r.left) / r.width), y = cl((e.clientY - r.top) / r.height); o.crop = { x: Math.min(selDrag.x, x), y: Math.min(selDrag.y, y), w: Math.abs(x - selDrag.x), h: Math.abs(y - selDrag.y) }; showSel(); };
             wrap.onpointerup = () => { selDrag = null; if (o.crop && (o.crop.w < 0.03 || o.crop.h < 0.03)) { o.crop = null; showSel(); } };
@@ -345,12 +457,12 @@
                 if (a === 'rl') { o.rot = (o.rot + 270) % 360; o.crop = null; } else if (a === 'rr') { o.rot = (o.rot + 90) % 360; o.crop = null; }
                 else if (a === 'skew') { b.disabled = true; b.textContent = '⏳ …'; try { const base = await processImage(p.orig, { rot: o.rot }, 900, 0.7); o.angle = Math.max(-10, Math.min(10, await estimateSkew(base.url))); } catch (e) { } b.disabled = false; b.textContent = '📐 تصحيح الميل تلقائياً'; }
                 else if (a === 'edges') { b.disabled = true; b.textContent = '⏳ …'; try { const bx = await estimateCropBox(p.orig, o.rot, o.angle); if (bx) o.crop = bx; else toast('لم تُكتشف حواف خارجية لحذفها'); } catch (e) { } b.disabled = false; b.textContent = '🔲 حذف الحواف تلقائياً'; }
-                else if (a === 'nocrop') o.crop = null; else if (a === 'zoom') zoom = !zoom; else if (a === 'reset') Object.assign(o, { rot: 0, angle: 0, contrast: 1, brightness: 1, gray: false, bw: false, crop: null });
+                else if (a === 'nocrop') o.crop = null; else if (a === 'zoom') zoom = !zoom; else if (a === 'reset') Object.assign(o, { rot: 0, angle: 0, contrast: 1, brightness: 1, gray: false, bw: false, flat: false, clean: false, crop: null });
                 syncUI(); draw();
             });
             const close = () => ed.remove();
             ed.querySelector('#sc-edx').onclick = close; ed.querySelector('#sc-edcancel').onclick = close;
-            ed.querySelector('#sc-edok').onclick = async () => { p.ops = { ...o }; try { await reprocess(p); } catch (e) { toast('تعذّر تطبيق التعديل', true); } close(); render(); };
+            ed.querySelector('#sc-edok').onclick = async () => { p.ops = { ...o }; try { await reprocess(p); } catch (e) { toast('تعذّر تطبيق التعديل', true); } close(); render(); if (needAnalysis()) analyzeAll(); };
             syncUI(); draw();
         }
 
@@ -358,19 +470,58 @@
         const existingNames = () => { try { return opts.existingNames ? opts.existingNames() : []; } catch (e) { return []; } };
         const cleanPart = (t) => (t || '').trim().replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '');
         function nextSerial(prefix) { const re = new RegExp('^' + escRe(prefix) + '_(\\d+)(\\.|$)'); let mx = 0; existingNames().forEach(n => { const m = re.exec(n); if (m) mx = Math.max(mx, +m[1]); }); return mx + 1; }
-        function planNames(count) {
-            const type = $('#sc-type').value, f = opts.folder, prefix = f + (type ? '_' + type : ''), custom = cleanPart($('#sc-ref').value);
-            if (custom) return Array.from({ length: count }, (_, i) => prefix + '_' + custom + (i ? '_' + (i + 1) : ''));
-            const n0 = nextSerial(prefix); return Array.from({ length: count }, (_, i) => prefix + '_' + String(n0 + i).padStart(2, '0'));
+        // ---------- تقسيم الدفعة إلى مستندات (مسح متواصل) ----------
+        const optOn = (id) => { const e = $(id); return !!(e && e.checked); };
+        function groups() {
+            const split = optOn('#sc-optsplit'), gs = []; let cur = null;
+            for (const p of pages) {
+                if (p.kind === 'pdf') { gs.push({ kind: 'pdf', pages: [p] }); cur = null; continue; }
+                if (split && p.blank) { cur = null; continue; }                       // الصفحة الفارغة = ورقة فاصلة
+                const byCont = split && cur && cur.cont && p.cont && p.cont !== cur.cont;  // تغيّر رقم الحاوية = مستند جديد
+                if (!cur || p.newDoc || byCont) { cur = { kind: 'img', pages: [], cont: '', type: '' }; gs.push(cur); }
+                cur.pages.push(p); if (!cur.cont && p.cont) cur.cont = p.cont; if (!cur.type && p.type) cur.type = p.type;
+            }
+            return gs;
+        }
+        const needAnalysis = () => optOn('#sc-optsplit') || optOn('#sc-optauto') || ($('#sc-type') && $('#sc-type').value === '__auto');
+        let anBusy = false;
+        async function analyzeAll() {
+            if (anBusy) return; anBusy = true; const box = $('#sc-sug');
+            try {
+                let t;
+                while ((t = pages.filter(p => p.kind === 'img' && !p.blank && !p.an)).length) {
+                    const p = t[0], all = pages.filter(x => x.kind === 'img' && !x.blank), k = all.length - t.length + 1;
+                    box.hidden = false; box.innerHTML = '⏳ تحليل الصفحة ' + k + ' من ' + all.length + '… (قراءة النص لتحديد رقم الحاوية ونوع المستند)';
+                    try {
+                        if (!p.ocr || p.ocr.for !== p.dataUrl) p.ocr = await ocrImage(p.dataUrl);
+                        const v = detectContainers(p.ocr.text).find(x => x.valid); p.cont = v ? v.code : ''; p.type = classifyDoc(p.ocr.text); p.an = true;
+                    } catch (e) { lastErr = 'analyze: ' + e.message; pages.forEach(x => x.an = true); box.innerHTML = '❌ تعذّر التحليل: ' + esc(e.message); box.hidden = false; render(); return; }
+                }
+                const gs = groups(), nt = gs.filter(g => g.type).length, nc = gs.filter(g => g.cont).length;
+                if (gs.length) { box.hidden = false; box.innerHTML = '🧠 تم تحليل الدفعة: <b>' + gs.length + '</b> مستند — رقم حاوية في ' + nc + '، نوع معروف في ' + nt + '. راجع الأسماء أسفل الصفحة قبل الحفظ.'; }
+                render();
+            } finally { anBusy = false; }
+        }
+        function planNames(gs) {
+            const gType = $('#sc-type').value, f = opts.folder, custom = cleanPart($('#sc-ref').value), smart = optOn('#sc-optauto') && !custom, batch = new Set(), next = {};
+            return gs.map((g, i) => {
+                const type = gType === '__auto' ? (g.type || '') : gType, prefix = f + (type ? '_' + type : '');
+                let base;
+                if (custom) base = prefix + '_' + custom + (i ? '_' + (i + 1) : '');
+                else if (smart && g.cont) base = prefix + '_' + g.cont;
+                else { if (next[prefix] === undefined) next[prefix] = nextSerial(prefix); base = prefix + '_' + String(next[prefix]++).padStart(2, '0'); }
+                let b = base, k = 2; while (batch.has(b)) b = base + '_' + (k++);
+                batch.add(b); return b;
+            });
         }
         const estBytes = () => pages.reduce((s, p) => s + (p.kind === 'pdf' ? p.base64.length : p.dataUrl.length) * 0.75, 0);
         function updatePreview() {
-            const el = $('#sc-preview'); if (!el) return;
-            const jobs = (pages.some(p => p.kind === 'img') ? 1 : 0) + pages.filter(p => p.kind === 'pdf').length;
-            el.textContent = jobs ? 'سيُحفظ باسم: ' + planNames(jobs).map(n => n + '.pdf').join(' ، ') + '  ·  الحجم التقريبي: ' + (estBytes() / 1048576).toFixed(1) + ' MB' : '';
+            const el = $('#sc-preview'); if (!el) return; const gs = groups();
+            if (!gs.length) { el.textContent = ''; return; }
+            const names = planNames(gs);
+            el.innerHTML = (gs.length === 1 ? 'سيُحفظ باسم: <b dir="ltr">' + esc(names[0]) + '.pdf</b>' : 'سيُحفظ <b>' + gs.length + '</b> مستندات: ' + gs.map((g, i) => '<b dir="ltr">' + esc(names[i]) + '.pdf</b> (' + g.pages.length + ' ص)').join(' ، ')) + '  ·  الحجم التقريبي: ' + (estBytes() / 1048576).toFixed(1) + ' MB';
         }
 
-        // ---------- بناء PDF (ضغط ذكي + نص قابل للبحث) ----------
         async function buildPdf(imgs, level, searchable) {
             const J = window.jspdf && window.jspdf.jsPDF; if (!J) throw new Error('jsPDF غير محمّل');
             let pdf = null;
@@ -404,32 +555,101 @@
         }
 
         // ---------- الحفظ ----------
+        // فحص التكرار: بصمة الصورة (محلية + من سجل GitHub المشترك) ورقم الحاوية في الأسماء الموجودة
+        async function findDups(gs, names) {
+            const out = [], local = await hashList(opts.folder); let remote = [];
+            try { const info = await Promise.race([ghInfo(opts.folder), new Promise(r => setTimeout(() => r(null), 6000))]); remote = ((info && info.scanLog) || []).flatMap(e => e.hashes || []); } catch (e) { }
+            const known = local.concat(remote);
+            for (let k = 0; k < gs.length; k++) {
+                const g = gs[k]; if (g.kind !== 'img') continue;
+                try { g.hash = await dhash(g.pages[0].dataUrl); } catch (e) { g.hash = ''; }
+                const m = g.hash && known.find(x => x.h && x.h.length === g.hash.length && hamming(x.h, g.hash) <= 14);
+                if (m) out.push('«' + names[k] + '» يشبه الملف المحفوظ «' + m.n + '»' + (m.t ? ' (' + new Date(m.t).toLocaleDateString('ar-EG') + ')' : ''));
+                if (g.cont) { const same = existingNames().find(n => n.toUpperCase().includes(g.cont) && n.replace(/\.pdf$/i, '') !== names[k].replace(/\.pdf$/i, '')); if (same) out.push('رقم الحاوية ' + g.cont + ' موجود في الملف «' + same + '»'); }
+            }
+            return out;
+        }
         async function save() {
-            if (!pages.length) return toast('لا توجد صفحات للحفظ', true);
+            const gs = groups(); if (!gs.length) return toast('لا توجد صفحات للحفظ', true);
             if (typeof uploadBase64ToArchive !== 'function') return toast('وحدة الأرشيف غير متاحة', true);
-            const folder = opts.folder, imgs = pages.filter(p => p.kind === 'img'), pdfs = pages.filter(p => p.kind === 'pdf');
-            const names = planNames((imgs.length ? 1 : 0) + pdfs.length).map(n => n + '.pdf');
-            const dup = names.filter(n => existingNames().includes(n));
-            if (dup.length && !win.confirm('يوجد ملف بنفس الاسم وسيتم استبداله:\n' + dup.join('\n') + '\nمتابعة؟')) return;
-            const btn = $('#sc-save'); btn.disabled = true; btn.textContent = '⏳ جارٍ الحفظ…';
-            let ok = 0, fail = 0, saved = [];
+            if (typeof hasPerm === 'function' && !hasPerm('scan')) return toast('⛔ ليس لديك صلاحية المسح والحفظ', true);
+            const folder = opts.folder, names = planNames(gs).map(n => n + '.pdf'), btn = $('#sc-save');
+            btn.disabled = true; btn.textContent = '⏳ فحص التكرار…';
+            let ok = 0, fail = 0, queued = 0; const saved = [], hashes = [], t0 = new Date().toISOString();
             try {
-                const jobs = []; let k = 0;
-                if (imgs.length) jobs.push([names[k++], await buildSmart(imgs, $('#sc-optsearch').checked)]);
-                pdfs.forEach(p => jobs.push([names[k++], p.base64]));
+                const warns = await findDups(gs, names), dup = names.filter(n => existingNames().includes(n)), msgs = [];
+                if (dup.length) msgs.push('يوجد ملف بنفس الاسم وسيتم استبداله:\n' + dup.join('\n'));
+                if (warns.length) msgs.push('⚠️ احتمال تكرار:\n' + warns.join('\n'));
+                if (msgs.length && !win.confirm(msgs.join('\n\n') + '\n\nمتابعة الحفظ؟')) { btn.disabled = false; btn.textContent = '💾 حفظ في الأرشيف'; return; }
+                const searchable = $('#sc-optsearch').checked, jobs = [];
+                for (let k = 0; k < gs.length; k++) { btn.textContent = '⏳ تجهيز ' + (k + 1) + ' من ' + gs.length + '…'; const g = gs[k]; jobs.push({ name: names[k], g, b64: g.kind === 'pdf' ? g.pages[0].base64 : await buildSmart(g.pages, searchable) }); }
                 btn.textContent = '⏳ رفع إلى الأرشيف…';
-                for (const [n, b64] of jobs) { const r = await uploadBase64ToArchive(folder, n, b64); if (r && r.success) { ok++; saved.push(n); } else fail++; }
-                const srcs = Array.from(new Set(pages.map(p => p.src).filter(Boolean))).join(' + ') || '—';
-                if (ok) {
-                    const entry = { t: new Date().toISOString(), user: (window.getCurrentUser && (getCurrentUser() || {}).fullName) || '—', files: saved, pages: pages.length, type: $('#sc-type').value || '', source: srcs, searchable: !!$('#sc-optsearch').checked };
-                    try { window.logActivity && logActivity('scan', 'مسح مستند: ' + folder + '/' + saved.join(',') + ' (' + pages.length + ' صفحة)'); } catch (e) { }
-                    appendScanLog(folder, entry);
-                    toast('✅ تم حفظ ' + ok + ' ملف في الأرشيف: ' + folder); pages = []; $('#sc-ref').value = ''; $('#sc-sug').hidden = true;
-                    if (opts.onSaved) try { opts.onSaved(); } catch (e) { }
+                const srcs = Array.from(new Set(pages.map(p => p.src).filter(Boolean))).join(' + ') || '—', who = (window.getCurrentUser && (getCurrentUser() || {}).fullName) || '—', selType = $('#sc-type').value;
+                for (const j of jobs) {
+                    const entry = { t: t0, user: who, files: [j.name], pages: j.g.pages.length, type: selType === '__auto' ? (j.g.type || '') : selType, source: srcs, searchable: !!searchable, cont: j.g.cont || '', hashes: j.g.hash ? [{ n: j.name, h: j.g.hash, t: t0 }] : [] };
+                    let r = null; if (navigator.onLine !== false) { try { r = await uploadBase64ToArchive(folder, j.name, j.b64); } catch (e) { r = null; } }
+                    if (r && r.success) { ok++; saved.push(j.name); await appendScanLog(folder, entry); }
+                    else { try { await qAdd({ folder, name: j.name, b64: j.b64, entry }); queued++; } catch (e) { fail++; lastErr = 'queue: ' + e.message; } }
+                    if (j.g.hash) hashes.push({ n: j.name, h: j.g.hash, t: t0 });
                 }
-                if (fail) toast('⚠️ فشل حفظ ' + fail + ' ملف (تحقق من رمز GitHub أو الخادم المحلي)', true);
+                await hashAdd(folder, hashes);
+                if (ok) try { window.logActivity && logActivity('scan', 'مسح مستند: ' + folder + '/' + saved.join(',') + ' (' + jobs.reduce((a, j) => a + j.g.pages.length, 0) + ' صفحة)'); } catch (e) { }
+                if (ok) toast('✅ تم حفظ ' + ok + ' ملف في الأرشيف: ' + folder);
+                if (queued) toast('📤 تعذّر الرفع الآن — حُفظ ' + queued + ' ملف في قائمة الانتظار وسيُرفع تلقائياً عند توفر الاتصال', true);
+                if (fail) toast('⚠️ فشل حفظ ' + fail + ' ملف نهائياً (المساحة أو الصلاحيات)', true);
+                if (!fail) { pages = []; $('#sc-ref').value = ''; $('#sc-sug').hidden = true; }
+                if (ok && opts.onSaved) try { opts.onSaved(); } catch (e) { }
             } catch (e) { lastErr = 'save: ' + e.message; toast('❌ ' + e.message, true); }
-            btn.disabled = false; btn.textContent = '💾 حفظ في الأرشيف'; render();
+            btn.disabled = false; btn.textContent = '💾 حفظ في الأرشيف'; render(); qBadge();
+        }
+        // ---------- الطابور ----------
+        async function qBadge() { const b = $('#sc-hq'); if (!b) return; const n = (await qList()).length; b.hidden = !n; b.textContent = '📤 معلّقة (' + n + ')'; }
+        async function showQueue() {
+            const p = panel('📤 ملفات بانتظار الرفع', '⏳ …'), body = p.querySelector('#sc-pbody');
+            const draw = async () => {
+                const ids = await qList(), items = []; for (const id of ids) { const j = await qGet(id); if (j) items.push(j); }
+                if (!items.length) { body.innerHTML = 'لا توجد ملفات معلّقة ✓'; qBadge(); return; }
+                body.innerHTML = '<p class="sc-note">تُرفع هذه الملفات تلقائياً عند عودة الاتصال. يمكنك المحاولة الآن أو حذف أي ملف.</p><div class="sc-row"><button class="sc-primary" id="sc-qrun" style="padding:8px 16px;font-size:13px">↻ إعادة المحاولة الآن</button></div><table class="sc-tbl"><tr><th>المجلد</th><th>الملف</th><th>الحجم</th><th>محاولات</th><th></th></tr>' + items.map(j => '<tr><td dir="ltr">' + esc(j.folder) + '</td><td dir="ltr">' + esc(j.name) + '</td><td>' + (j.b64.length * 0.75 / 1048576).toFixed(1) + ' MB</td><td>' + (j.tries || 0) + '</td><td><button class="sc-ghost" data-q="' + j.id + '">🗑</button></td></tr>').join('') + '</table>';
+                body.querySelector('#sc-qrun').onclick = async (e) => { e.target.disabled = true; e.target.textContent = '⏳ …'; const r = await qFlush(true); toast(r.ok ? '✅ رُفع ' + r.ok + ' ملف' + (r.fail ? ' — تعذّر ' + r.fail : '') : '⚠️ تعذّر الرفع (تحقق من الاتصال ورمز GitHub)', !r.ok); if (r.ok && opts.onSaved) try { opts.onSaved(); } catch (x) { } draw(); };
+                body.querySelectorAll('[data-q]').forEach(b => b.onclick = async () => { if (win.confirm('حذف هذا الملف من الطابور نهائياً؟')) { await qDel(b.dataset.q); draw(); } });
+                qBadge();
+            };
+            draw();
+        }
+
+        // ---------- ملفات الإعدادات (Profiles) ----------
+        const PF = [['#sc-dpi', 'v'], ['#sc-color', 'v'], ['#sc-source', 'v'], ['#sc-type', 'v'], ['#sc-optblank', 'c'], ['#sc-optdeskew', 'c'], ['#sc-optedges', 'c'], ['#sc-optclean', 'c'], ['#sc-optocr', 'c'], ['#sc-optsearch', 'c'], ['#sc-optsplit', 'c'], ['#sc-optauto', 'c'], ['#sc-optcont', 'c']];
+        const BUILTIN = {
+            '⚙️ قياسي': { '#sc-dpi': '200', '#sc-color': 'color', '#sc-source': 'glass', '#sc-optblank': 1, '#sc-optdeskew': 1, '#sc-optedges': 1, '#sc-optclean': 0, '#sc-optsplit': 0, '#sc-optauto': 0, '#sc-optcont': 0 },
+            '🧾 فواتير ومستندات (أبيض وأسود)': { '#sc-dpi': '200', '#sc-color': 'bw', '#sc-source': 'feeder', '#sc-optblank': 1, '#sc-optdeskew': 1, '#sc-optedges': 1, '#sc-optclean': 1, '#sc-optsplit': 0, '#sc-optauto': 0, '#sc-optcont': 0 },
+            '🖼️ صور ملوّنة عالية الجودة': { '#sc-dpi': '300', '#sc-color': 'color', '#sc-source': 'glass', '#sc-optblank': 0, '#sc-optdeskew': 0, '#sc-optedges': 1, '#sc-optclean': 0, '#sc-optsplit': 0, '#sc-optauto': 0, '#sc-optcont': 0 },
+            '📚 دفعة مستندات متعددة (تسمية وفصل تلقائي)': { '#sc-dpi': '200', '#sc-color': 'gray', '#sc-source': 'feeder', '#sc-type': '__auto', '#sc-optblank': 1, '#sc-optdeskew': 1, '#sc-optedges': 1, '#sc-optclean': 1, '#sc-optsplit': 1, '#sc-optauto': 1, '#sc-optcont': 0 }
+        };
+        const userProfiles = () => { try { return JSON.parse(store.get('scProfiles', '{}')) || {}; } catch (e) { return {}; } };
+        function fillProfiles(sel) {
+            const sel0 = $('#sc-prof'), u = userProfiles();
+            sel0.innerHTML = '<option value="">— اختر ملفاً —</option><optgroup label="جاهزة">' + Object.keys(BUILTIN).map(n => '<option value="b:' + esc(n) + '">' + esc(n) + '</option>').join('') + '</optgroup>' + (Object.keys(u).length ? '<optgroup label="ملفاتي">' + Object.keys(u).map(n => '<option value="u:' + esc(n) + '">' + esc(n) + '</option>').join('') + '</optgroup>' : '');
+            if (sel) sel0.value = sel;
+        }
+        function applyProfile(st) {
+            PF.forEach(([id, k]) => { if (!(id in st)) return; const e = $(id); if (!e) return; if (k === 'c') e.checked = !!+st[id]; else e.value = st[id]; e.dispatchEvent(new Event('change')); });
+            if (needAnalysis()) analyzeAll(); render();
+        }
+        function initProfiles() {
+            fillProfiles(store.get('scProfileSel', ''));
+            $('#sc-prof').onchange = () => {
+                const v = $('#sc-prof').value; store.set('scProfileSel', v); if (!v) return;
+                const nm = v.slice(2), st = v[0] === 'b' ? BUILTIN[nm] : userProfiles()[nm]; if (st) { applyProfile(st); toast('✔ تم تطبيق: ' + nm.replace(/^[^\wء-ي]+/u, '')); }
+            };
+            $('#sc-profsave').onclick = () => {
+                const nm = (win.prompt('اسم ملف الإعدادات (مثال: فواتير MSC):') || '').trim().slice(0, 40); if (!nm) return;
+                const st = {}; PF.forEach(([id, k]) => { const e = $(id); if (e) st[id] = k === 'c' ? (e.checked ? 1 : 0) : e.value; });
+                const u = userProfiles(); u[nm] = st; store.set('scProfiles', JSON.stringify(u)); store.set('scProfileSel', 'u:' + nm); fillProfiles('u:' + nm); toast('💾 تم حفظ الملف: ' + nm);
+            };
+            $('#sc-profdel').onclick = () => {
+                const v = $('#sc-prof').value; if (!v || v[0] !== 'u') return toast('اختر أحد «ملفاتي» لحذفه (الملفات الجاهزة لا تُحذف)', true);
+                if (!win.confirm('حذف ملف الإعدادات «' + v.slice(2) + '»؟')) return; const u = userProfiles(); delete u[v.slice(2)]; store.set('scProfiles', JSON.stringify(u)); store.set('scProfileSel', ''); fillProfiles('');
+            };
         }
 
         // ---------- لوحات: سجل المسح / التشخيص ----------
@@ -485,18 +705,21 @@
             $('#sc-count').textContent = pages.length;
             const box = $('#sc-pages'); box.innerHTML = ''; box.classList.toggle('empty', !pages.length);
             if (!pages.length) box.innerHTML = '<div class="sc-empty"><div>🗂️</div><b>لا توجد صفحات بعد</b><small>ابدأ المسح أو استورد ملفات، وستظهر الصفحات هنا للمراجعة قبل الحفظ.</small></div>';
+            const gs = groups(), gmap = new Map(), firsts = new Set(), splitOn = optOn('#sc-optsplit');
+            gs.forEach((g, k) => { g.pages.forEach(x => gmap.set(x, k + 1)); if (k) firsts.add(g.pages[0]); });
             pages.forEach((p, i) => {
-                const d = doc.createElement('div'); d.className = 'sc-pg';
-                d.innerHTML = '<span class="sc-num">' + (i + 1) + '</span>' + (p.blank ? '<span class="sc-blank" title="تبدو فارغة">فارغة؟</span>' : '') + (p.fixed ? '<span class="sc-fixed" title="تم تصحيح الميل تلقائياً — اضغط للتحرير">↻ ' + Math.abs(p.fixed).toFixed(1) + '°</span>' : '') + (p.edges ? '<span class="sc-fixed sc-edg" title="تم حذف الحواف الخارجية — اضغط للتحرير">✂ حواف</span>' : '') +
+                const d = doc.createElement('div'); d.className = 'sc-pg' + (firsts.has(p) ? ' sc-newdoc' : '');
+                d.innerHTML = '<span class="sc-num">' + (i + 1) + '</span>' + (p.blank ? (splitOn ? '<span class="sc-blank" title="ورقة فاصلة: لن تُحفظ وتبدأ بعدها مستنداً جديداً">✂ فاصل</span>' : '<span class="sc-blank" title="تبدو فارغة">فارغة؟</span>') : '') + (gmap.has(p) && (gs.length > 1) ? '<span class="sc-gn" title="رقم المستند داخل الدفعة' + (p.cont ? ' — ' + p.cont : '') + (p.type ? ' — ' + p.type : '') + '">م' + gmap.get(p) + '</span>' : '') + (p.fixed ? '<span class="sc-fixed" title="تم تصحيح الميل تلقائياً — اضغط للتحرير">↻ ' + Math.abs(p.fixed).toFixed(1) + '°</span>' : '') + (p.edges ? '<span class="sc-fixed sc-edg" title="تم حذف الحواف الخارجية — اضغط للتحرير">✂ حواف</span>' : '') + (p.cleaned ? '<span class="sc-fixed sc-edg sc-cln" title="تمت إزالة الظلال والنقاط">🧼</span>' : '') +
                     (p.kind === 'img' ? '<img src="' + p.dataUrl + '" alt="" data-a="edit" title="اضغط للتحرير">' : '<div class="sc-pdf">PDF</div>') +
                     '<div class="sc-nm" title="' + esc(p.name) + '">' + esc(p.name.slice(0, 22)) + '</div>' +
-                    '<div class="sc-act"><button data-a="r" title="تقديم">→</button><button data-a="l" title="تأخير">←</button>' + (p.kind === 'img' ? '<button data-a="rot" title="تدوير">⟳</button><button data-a="edit" title="تحرير">✎</button>' : '') + '<button data-a="x" title="حذف" class="del">✕</button></div>';
+                    '<div class="sc-act"><button data-a="split" title="ابدأ مستنداً جديداً من هذه الصفحة" class="' + (p.newDoc ? 'on' : '') + '">📑</button><button data-a="r" title="تقديم">→</button><button data-a="l" title="تأخير">←</button>' + (p.kind === 'img' ? '<button data-a="rot" title="تدوير">⟳</button><button data-a="edit" title="تحرير">✎</button>' : '') + '<button data-a="x" title="حذف" class="del">✕</button></div>';
                 d.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
                     const a = b.dataset.a, j = pages.indexOf(p);
                     if (a === 'x') pages.splice(j, 1);
+                    else if (a === 'split') p.newDoc = !p.newDoc;
                     else if (a === 'r' && j > 0) [pages[j - 1], pages[j]] = [pages[j], pages[j - 1]];
                     else if (a === 'l' && j < pages.length - 1) [pages[j + 1], pages[j]] = [pages[j], pages[j + 1]];
-                    else if (a === 'rot') { p.ops = { ...(p.ops || {}), rot: (((p.ops || {}).rot || 0) + 90) % 360, crop: null }; await reprocess(p); }
+                    else if (a === 'rot') { p.ops = { ...(p.ops || {}), rot: (((p.ops || {}).rot || 0) + 90) % 360, crop: null }; await reprocess(p); if (needAnalysis()) analyzeAll(); }
                     else if (a === 'edit') return openEditor(p);
                     render();
                 });
@@ -550,7 +773,7 @@
 .sc-pdf{height:130px;display:flex;align-items:center;justify-content:center;background:#fdecea;border-radius:8px;font-weight:800;color:#c0392b;font-size:20px}
 .sc-num{position:absolute;top:4px;right:4px;z-index:1;background:var(--pri2);color:#fff;border-radius:999px;min-width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
 .sc-blank{position:absolute;top:4px;left:4px;z-index:1;background:var(--warn);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}
-.sc-fixed{position:absolute;top:4px;left:4px;z-index:1;background:var(--ok);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}.sc-blank~.sc-fixed{top:26px}.sc-fixed.sc-edg{top:auto;bottom:4px;background:#0a6cff}
+.sc-fixed{position:absolute;top:4px;left:4px;z-index:1;background:var(--ok);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}.sc-blank~.sc-fixed{top:26px}.sc-prof{display:flex;gap:8px;align-items:flex-end;margin:0 0 14px;flex-wrap:wrap}.sc-prof select{min-width:240px}.sc-gn{position:absolute;top:4px;right:34px;z-index:1;background:var(--pri2);color:#fff;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}.sc-pg.sc-newdoc{box-shadow:-5px 0 0 var(--pri)}.sc-act button.on{background:var(--pri);color:#fff}.sc-fixed.sc-cln{right:auto;left:70px;background:#7a4ee0}.sc-fixed.sc-edg{top:auto;bottom:4px;background:#0a6cff}
 .sc-nm{font-size:11.5px;color:var(--mu);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-act{display:flex;justify-content:center;gap:4px;margin-top:6px}.sc-act button{background:var(--bg);border:1px solid var(--bd);color:var(--tx);border-radius:7px;width:28px;height:26px;cursor:pointer;font-size:13px}.sc-act button:hover{border-color:var(--pri);color:var(--pri)}.sc-act button.del:hover{border-color:var(--bad);color:var(--bad)}
 .sc-foot{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:14px 20px;border-top:1px solid var(--bd);background:var(--bg)}.sc-foot .sc-f{flex:1;min-width:180px}.sc-foot .sc-f.t{flex:0 0 190px;min-width:150px}.sc-prev{flex-basis:100%;order:3;font-size:13px;font-weight:700;color:var(--ok);min-height:18px}
@@ -569,9 +792,10 @@
             root = doc.createElement('div'); root.id = 'sc-root'; root.hidden = true;
             root.innerHTML = `<div id="sc-box">
  <div class="sc-head"><div class="sc-ttl"><div class="sc-ico">📠</div><div><h3>مسح مستند</h3><p class="sc-sub">سيُحفظ داخل مجلد الأرشيف: <span class="sc-chip">${esc(opts.folder)}</span></p></div></div>
-  <div class="sc-hbtns"><button class="sc-hb" id="sc-hlog">📜 سجل المسح</button><button class="sc-hb" id="sc-hdiag">🩺 تشخيص</button><button class="sc-x" id="sc-close" title="إغلاق">✕</button></div></div>
+  <div class="sc-hbtns"><button class="sc-hb" id="sc-hq" hidden>📤 معلّقة (0)</button><button class="sc-hb" id="sc-hlog">📜 سجل المسح</button><button class="sc-hb" id="sc-hdiag">🩺 تشخيص</button><button class="sc-x" id="sc-close" title="إغلاق">✕</button></div></div>
  <div class="sc-tabs"><button data-tab="scan" class="on">🖨️ السكانر</button><button data-tab="folder">📁 مجلد المسح</button><button data-tab="cam">📷 الكاميرا</button><button data-tab="file">📤 رفع ملفات</button></div>
  <div class="sc-body">
+  <div class="sc-prof"><label class="sc-f" style="flex:1;margin:0">ملف إعدادات جاهز<select id="sc-prof"></select></label><button class="sc-ghost" id="sc-profsave" title="يحفظ الدقة واللون ومصدر الورق وكل الخيارات الحالية باسم تختاره">💾 حفظ الإعدادات الحالية</button><button class="sc-ghost" id="sc-profdel" title="حذف الملف المحدد (الملفات الجاهزة لا تُحذف)">🗑</button></div>
   <div class="sc-pane" data-pane="scan">
    <div class="sc-status"><span id="sc-bstate">…</span><button class="sc-ghost" id="sc-brefresh">↻ تحديث</button></div>
    <div class="sc-warnbar" id="sc-ver" hidden style="margin:0 0 14px"></div>
@@ -596,7 +820,7 @@
    <div class="sc-drop" id="sc-drop"><div class="big">📤</div><p>اسحب الصور أو ملفات PDF وأفلتها هنا</p><button class="sc-primary" id="sc-up" style="padding:10px 18px;font-size:14px">اختيار ملفات</button><input type="file" id="sc-file" multiple accept="image/*,.pdf" hidden></div>
   </div>
   <div class="sc-ph"><h4>الصفحات <span class="sc-badge" id="sc-count">0</span></h4><button class="sc-ghost" id="sc-ocr" disabled title="يقرأ الصفحة الأولى ويقترح رقم الحاوية">🔎 قراءة رقم الحاوية (OCR)</button><button class="sc-ghost sc-sp" id="sc-clear" disabled>🗑 مسح الكل</button></div>
-  <div class="sc-opts"><label class="sc-chk"><input type="checkbox" id="sc-optblank"> حذف الصفحات الفارغة تلقائياً</label><label class="sc-chk" title="يقدّر ميل كل صفحة ويعدّلها فور استلامها"><input type="checkbox" id="sc-optdeskew"> تصحيح الميل تلقائياً</label><label class="sc-chk" title="يقص الحواف الداكنة وظل غطاء السكانر حول الورقة فور استلام كل صفحة"><input type="checkbox" id="sc-optedges"> حذف الحواف الخارجية تلقائياً</label><label class="sc-chk"><input type="checkbox" id="sc-optocr"> قراءة رقم الحاوية تلقائياً بعد المسح</label><label class="sc-chk" title="يضيف نصاً مخفياً (إنجليزي وأرقام) للبحث داخل الملف — أبطأ في الحفظ"><input type="checkbox" id="sc-optsearch"> PDF قابل للبحث (إنجليزي/أرقام)</label></div>
+  <div class="sc-opts"><label class="sc-chk"><input type="checkbox" id="sc-optblank"> حذف الصفحات الفارغة تلقائياً</label><label class="sc-chk" title="يقدّر ميل كل صفحة ويعدّلها فور استلامها"><input type="checkbox" id="sc-optdeskew"> تصحيح الميل تلقائياً</label><label class="sc-chk" title="يقص الحواف الداكنة وظل غطاء السكانر حول الورقة فور استلام كل صفحة"><input type="checkbox" id="sc-optedges"> حذف الحواف الخارجية تلقائياً</label><label class="sc-chk" title="يعادل الإضاءة ويزيل الظلال والخلفية الرمادية والنقاط وثقوب الدباسة (قد يبطئ المعالجة قليلاً)"><input type="checkbox" id="sc-optclean"> تحسين الجودة (ظلال/نقاط/ثقوب)</label><label class="sc-chk" title="الورقة الفارغة أو تغيّر رقم الحاوية يبدأ مستنداً جديداً، فيُحفظ كل مستند في ملف مستقل"><input type="checkbox" id="sc-optsplit"> فصل المستندات تلقائياً (ورقة فاصلة / رقم حاوية)</label><label class="sc-chk" title="يقرأ كل صفحة ويسمّي الملف برقم الحاوية الصحيح (ISO 6346)"><input type="checkbox" id="sc-optauto"> تسمية ذكية برقم الحاوية</label><label class="sc-chk" title="بعد كل مسح يسألك عن دفعة تالية فتمسح المستندات واحداً بعد الآخر"><input type="checkbox" id="sc-optcont"> مسح متواصل</label><label class="sc-chk"><input type="checkbox" id="sc-optocr"> قراءة رقم الحاوية تلقائياً بعد المسح</label><label class="sc-chk" title="يضيف نصاً مخفياً (إنجليزي وأرقام) للبحث داخل الملف — أبطأ في الحفظ"><input type="checkbox" id="sc-optsearch"> PDF قابل للبحث (إنجليزي/أرقام)</label></div>
   <div class="sc-sug" id="sc-sug" hidden></div>
   <div id="sc-pages" class="empty"></div>
  </div>
@@ -609,14 +833,16 @@
             doc.body.appendChild(root);
             // خيارات محفوظة
             const opt = (id, key, def) => { const el = $(id); el.checked = store.get(key, def) === '1'; el.onchange = () => store.set(key, el.checked ? '1' : '0'); };
-            opt('#sc-optblank', 'scOptBlank', '1'); opt('#sc-optdeskew', 'scOptDeskew', '1'); opt('#sc-optedges', 'scOptEdges', '1'); opt('#sc-optocr', 'scOptOcr', '0'); opt('#sc-optsearch', 'scOptSearch', '0');
-            $('#sc-type').value = store.get('scDocType', ''); $('#sc-type').onchange = () => { store.set('scDocType', $('#sc-type').value); updatePreview(); };
+            opt('#sc-optblank', 'scOptBlank', '1'); opt('#sc-optdeskew', 'scOptDeskew', '1'); opt('#sc-optedges', 'scOptEdges', '1'); opt('#sc-optocr', 'scOptOcr', '0'); opt('#sc-optsearch', 'scOptSearch', '0'); opt('#sc-optclean', 'scOptClean', '0'); opt('#sc-optsplit', 'scOptSplit', '0'); opt('#sc-optauto', 'scOptAuto', '0'); opt('#sc-optcont', 'scOptCont', '0');
+            ['#sc-optsplit', '#sc-optauto'].forEach(id => { const e = $(id), o0 = e.onchange; e.onchange = () => { o0(); if (needAnalysis()) analyzeAll(); render(); }; });
+            $('#sc-type').value = store.get('scDocType', ''); $('#sc-type').onchange = () => { store.set('scDocType', $('#sc-type').value); if (needAnalysis()) analyzeAll(); updatePreview(); };
             const tabs = root.querySelectorAll('.sc-tabs button');
             tabs.forEach(t => t.onclick = () => { tabs.forEach(x => x.classList.toggle('on', x === t)); root.querySelectorAll('.sc-pane').forEach(p => p.hidden = p.dataset.pane !== t.dataset.tab); if (t.dataset.tab !== 'cam') camStop(); });
             $('#sc-ref').oninput = updatePreview;
             api.open = () => { root.hidden = false; render(); bridgeCheck(); };
             $('#sc-brefresh').onclick = bridgeCheck; $('#sc-go').onclick = bridgeScan; $('#sc-ocr').onclick = runOcr;
-            $('#sc-hlog').onclick = showLog; $('#sc-hdiag').onclick = showDiag;
+            $('#sc-hlog').onclick = showLog; $('#sc-hdiag').onclick = showDiag; $('#sc-hq').onclick = showQueue;
+            initProfiles(); qBadge(); const qt = setInterval(() => { if (!root || !root.isConnected) clearInterval(qt); else qBadge(); }, 8000);
             const closeIt = () => { root.hidden = true; camStop(); clearInterval(pollTimer); pollTimer = null; };
             $('#sc-close').onclick = closeIt; root.addEventListener('mousedown', e => { if (e.target === root) closeIt(); });
             $('#sc-pick').onclick = pickFolder; $('#sc-up').onclick = () => $('#sc-file').click();
@@ -636,9 +862,12 @@
     // ============================================================
     // الواجهة العامة: تُستدعى من شاشة الأرشيف
     // ============================================================
+    window.addEventListener('online', () => { qFlush(false); });
+    setTimeout(() => { if (navigator.onLine !== false) qList().then(l => l.length && qFlush(false)).catch(() => { }); }, 5000);
     const folderInst = new WeakMap();
     window.Scanner = {
         openForFolder: function (win, folderName) {
+            if (typeof hasPerm === 'function' && !hasPerm('scan')) { try { win.alert('⛔ ليس لديك صلاحية المسح'); } catch (e) { } return; }
             let inst = folderInst.get(win);
             if (!inst || inst.__folder !== folderName || !win.document.getElementById('sc-root')) {
                 const old = win.document.getElementById('sc-root'); if (old) old.remove();
@@ -650,6 +879,7 @@
                 inst.__folder = folderName; folderInst.set(win, inst);
             } else inst.open();
         },
-        _t: { isoValid, detectContainers, isBlank, estimateSkew, estimateCropBox, processImage }   // للاختبار
+        folderInfo: ghInfo, flushQueue: () => qFlush(true), queueCount: async () => (await qList()).length, scanStats,
+        _t: { isoValid, detectContainers, isBlank, estimateSkew, estimateCropBox, processImage, flattenBg, cleanSpecks, dhash, hamming, classifyDoc, qAdd, qList, qFlush, qDel, hashAdd, hashList }   // للاختبار
     };
 })();

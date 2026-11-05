@@ -366,6 +366,8 @@ async function openArchiveInternal(filterShip, filterDate) {
 
     const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
     const isAdminUser = user && user.role === 'admin';
+    const hp = (p) => (typeof hasPerm === 'function') ? !!hasPerm(p) : !!isAdminUser;
+    const canScanUser = hp('scan'), canUploadUser = hp('upload'), canDeleteUser = hp('delete');
     // 🆕 بناء عنوان يعرض السفينة + التاريخ (إن وُجد)
     let titleParts = [];
     if (filterShip) titleParts.push(filterShip);
@@ -394,6 +396,8 @@ async function openArchiveInternal(filterShip, filterDate) {
                 .search-bar { display: flex; gap: 10px; margin-bottom: 20px; }
                 .search-bar input { flex: 1; padding: 12px 18px; border: 2px solid #dee2e6; border-radius: 10px; font-size: 15px; }
                 .search-bar input:focus { border-color: #0a3d62; outline: none; }
+                .search-summary { background: #e8f4fd; border: 1px solid #b6dcf5; color: #0a3d62; padding: 9px 14px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; font-weight: 600; }
+                .file-name mark { background: #ffe58a; color: inherit; padding: 0 2px; border-radius: 3px; }
                 .loading { text-align: center; padding: 50px; color: #6c757d; font-size: 18px; }
                 .folder-card { background: #f8f9fa; border-radius: 12px; margin-bottom: 15px; overflow: hidden; border-right: 4px solid #0a3d62; }
                 .folder-header { padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background 0.2s; user-select: none; }
@@ -469,7 +473,7 @@ async function openArchiveInternal(filterShip, filterDate) {
                 </div>
                 ${!filterShip ? `
                 <div class="search-bar">
-                    <input type="text" id="archiveSearch" placeholder="🔍 ابحث باسم السفينة أو الخط أو التاريخ..." />
+                    <input type="text" id="archiveSearch" placeholder="🔍 بحث عام في كل المجلدات: سفينة، خط، تاريخ، رقم حاوية أو اسم مستند…" />
                 </div>` : ''}
                 <div id="archiveContent">
                     <div class="loading">⏳ جاري تحميل الأرشيف...</div>
@@ -499,6 +503,7 @@ window.ensureXLSX = function() {
     return window._xlsxLoadingPromise;
 };
                 window.isAdminUser = ${isAdminUser};
+                window.canScan = ${canScanUser}; window.canUpload = ${canUploadUser}; window.canDelete = ${canDeleteUser};
 				// 🆕 دالة تنسيق حجم الملف (داخل نافذة الأرشيف)
                 window.formatFileSize = function(bytes) {
                     if (!bytes || bytes < 0) return '0 B';
@@ -845,9 +850,11 @@ window.viewFileInArchive = async function(url, fileName) {
                 });
                 
 				window.deleteFileInArchive = async function(filePath, sha, folderName) {
+					if (!window.canDelete) { alert('⛔ ليس لديك صلاحية الحذف'); return; }
 					let fileName = filePath.split('/').pop();
 
 					if (!confirm('هل أنت متأكد من حذف:\\n' + fileName + '؟')) return;
+					try { window.archiveOpener.logActivity('delete', 'حذف ملف: ' + folderName + '/' + fileName); } catch (e) { }
 
 					// ⚠️ القيم مضمّنة هنا — لا حاجة لتعديل script.js
 					const ghOwner  = 'markingdchc';
@@ -995,10 +1002,12 @@ window.viewFileInArchive = async function(url, fileName) {
 				};
                 
                 window.openScannerForFolder = function(folderName) {
+                    if (!window.canScan) { alert('⛔ ليس لديك صلاحية المسح'); return; }
                     if (window.archiveOpener && window.archiveOpener.Scanner && window.archiveOpener.Scanner.openForFolder) window.archiveOpener.Scanner.openForFolder(window, folderName);
                     else alert("⚠️ وحدة المسح (scanner.js) غير محمّلة في الصفحة الرئيسية");
                 };
                 window.handleArchiveUpload = function(folderName) {
+                    if (!window.canUpload) { alert('⛔ ليس لديك صلاحية الرفع'); return; }
                     console.log("📤 بدء رفع مستندات إلى:", folderName);
                     
                     let input = document.createElement('input');
@@ -1454,18 +1463,18 @@ async function refreshArchiveWindow(archiveWindow, filterShip, filterDate) {
             return;
         }
 
-        renderArchiveFolders(archiveWindow, folders);
+        archiveWindow._allFolders = folders;
+        { const si = archiveWindow.document.getElementById('archiveSearch'); if (si && si.value.trim()) applyArchiveSearch(archiveWindow, folders, si.value); else renderArchiveFolders(archiveWindow, folders); }
 
         // ربط البحث (فقط عند عدم وجود فلتر)
         if (!filterShip && !filterDate) {
             let searchInput = archiveWindow.document.getElementById('archiveSearch');
             if (searchInput && !searchInput.dataset.bound) {
                 searchInput.dataset.bound = "1";
-                searchInput.addEventListener('input', (e) => {
-                    let query = e.target.value.toLowerCase();
-                    let filtered = folders.filter(f => f.name.toLowerCase().includes(query));
-                    renderArchiveFolders(archiveWindow, filtered);
-                });
+                let searchTimer = null;
+                const runIt = () => applyArchiveSearch(archiveWindow, archiveWindow._allFolders || folders, searchInput.value);
+                searchInput.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(runIt, 150); });
+                searchInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchInput.value = ''; runIt(); } });
             }
         }
 
@@ -1676,6 +1685,46 @@ async function fetchFolderContents(folderPath, token) {
 // ============================================================
 // 🎨 عرض المجلدات
 // ============================================================
+// ============================================================
+// 🔎 البحث العام: يبحث في أسماء المجلدات وأسماء كل الملفات داخلها
+//   - كلمات متعددة = كلها مطلوبة (AND) بأي ترتيب، ويتجاهل _ و - و . وحالة الأحرف وتشكيل العربية
+//   - تبقى كل صفوف الملفات في الصفحة (تُخفى غير المطابقة فقط) حتى لا تتأثر أرقام الترقيم عند المسح
+// ============================================================
+function normSearch(t) {
+    return String(t == null ? '' : t).toLowerCase()
+        .replace(/[ً-ْـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+        .replace(/[_\-.\/\\]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function applyArchiveSearch(archiveWindow, folders, rawQuery) {
+    const q = normSearch(rawQuery), tokens = q ? q.split(' ') : [];
+    if (!tokens.length) { renderArchiveFolders(archiveWindow, folders); return; }
+    const hit = (hay) => tokens.every(t => hay.includes(t));
+    const shown = [], info = new Map(); let nFiles = 0;
+    for (const f of folders) {
+        const fn = normSearch(f.name), files = f.files || [];
+        const nameHit = hit(fn), matched = new Set();
+        files.forEach((x, i) => { if (hit(fn + ' ' + normSearch(x.name))) matched.add(i); });
+        if (nameHit || matched.size) { shown.push(f); info.set(f.name, { nameHit, matched }); nFiles += nameHit ? files.length : matched.size; }
+    }
+    renderArchiveFolders(archiveWindow, shown);
+    const doc = archiveWindow.document, content = doc.getElementById('archiveContent');
+    if (!shown.length) { content.innerHTML = '<div class="empty">🔍 لا توجد نتائج لـ «' + String(rawQuery).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])) + '»</div>'; return; }
+    const esc = (t) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const raw = String(rawQuery).trim().split(/[\s_\-.\/\\]+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), re = raw.length ? new RegExp('(' + raw.join('|') + ')', 'gi') : null;
+    shown.forEach(f => {
+        const card = Array.from(content.querySelectorAll('.folder-card')).find(c => c.getAttribute('data-folder-name') === f.name); if (!card) return;
+        const { nameHit, matched } = info.get(f.name), rows = card.querySelectorAll('.file-row');
+        rows.forEach((row, i) => {
+            const show = nameHit || matched.has(i); row.style.display = show ? '' : 'none';
+            const sp = row.querySelector('.file-name [title]');
+            if (show && re && sp && matched.has(i)) sp.innerHTML = esc(sp.textContent).replace(re, '<mark>$1</mark>');
+        });
+        const body = card.querySelector('.folder-body'); if (body) body.classList.add('active');
+        const cnt = card.querySelector('.folder-count'); if (cnt && !nameHit) cnt.textContent = matched.size + ' مطابق من ' + rows.length;
+    });
+    content.insertAdjacentHTML('afterbegin', '<div class="search-summary">🔎 ' + nFiles + ' مستند في ' + shown.length + ' مجلد مطابق لـ «' + esc(String(rawQuery).trim()) + '»</div>');
+}
+
 function renderArchiveFolders(archiveWindow, folders) {
     let content = archiveWindow.document.getElementById('archiveContent');
 
@@ -1691,9 +1740,7 @@ function renderArchiveFolders(archiveWindow, folders) {
         // 🆕 إصلاح undefined: نأخذ العدد من filesCount، وإذا لم يجده يحسبه من طول مصفوفة الملفات
         let fileCount = (folder.filesCount !== undefined) ? folder.filesCount : (folder.files ? folder.files.length : 0);
 
-        let uploadBtn = archiveWindow.isAdminUser 
-            ? `<button class="btn-upload" onclick="event.stopPropagation(); window.handleArchiveUpload('${folder.name}')">📤 رفع مستندات</button> <button class="btn-upload" style="background:#0a7d8c;" onclick="event.stopPropagation(); window.openScannerForFolder('${folder.name}')">📠 مسح من السكانر</button>` 
-            : '';
+        let uploadBtn = (archiveWindow.canUpload ? `<button class="btn-upload" onclick="event.stopPropagation(); window.handleArchiveUpload('${folder.name}')">📤 رفع مستندات</button>` : '') + ' ' + (archiveWindow.canScan ? `<button class="btn-upload" style="background:#0a7d8c;" onclick="event.stopPropagation(); window.openScannerForFolder('${folder.name}')">📠 مسح من السكانر</button>` : '');
 
         html += `
             <div class="folder-card" data-folder-name="${folder.name}">
@@ -1724,7 +1771,7 @@ function renderFolderFiles(folder, archiveWindow) {
     for (let file of folder.files) {
         let sizeText = formatFileSize(file.size);
         let icon = getFileIcon(file.name);
-        let deleteBtn = archiveWindow.isAdminUser
+        let deleteBtn = archiveWindow.canDelete
             ? `<button class="btn-small btn-delete" onclick="event.stopPropagation(); window.deleteFileInArchive('${file.path}', '${file.sha}', '${folder.name}')">🗑️</button>`
             : '';
 
